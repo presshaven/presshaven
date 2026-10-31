@@ -1,0 +1,13 @@
+{
+  "format": "honeypot-ids-edge-policy",
+  "version": 1,
+  "targets": {
+    "mode": "direct",
+    "target_score": 40
+  },
+  "whitelist": {
+    "unlisted_score": 10,
+    "overrides": {},
+    "custom": []
+  }
+}
