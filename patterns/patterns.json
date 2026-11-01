@@ -2366,7 +2366,7 @@
       "signatures": [
         {
           "layer": "suricata",
-          "match": "alert http any any -> $HOME_NET $HTTP_PORTS (msg:\"WordPress Admin Brute Force Attempt\"; flow:established,to_server; content:\"POST\"; http_method; content:\"wp-login.php\"; http_uri; content:\"log=\"; http_client_body; content:\"pwd=\"; http_client_body; threshold:type limit, track by_src, count 5, seconds 60; classtype:web-application-attack; sid:1000017; rev:1;)",
+          "match": "alert http any any -> $HOME_NET $HTTP_PORTS (msg:\"WordPress Admin Brute Force Attempt\"; flow:established,to_server; content:\"POST\"; http_method; content:\"wp-login.php\"; http_uri; content:\"log=\"; http_client_body; content:\"pwd=\"; http_client_body; content:!\"honeypot-internal-healthprobe\"; http_user_agent; detection_filter:track by_src, count 5, seconds 60; classtype:web-application-attack; sid:1000017; rev:2;)",
           "kind": "suricata",
           "sid": 1000017
         }
@@ -2374,7 +2374,7 @@
       "suricata": [
         {
           "sid": 1000017,
-          "rev": 1,
+          "rev": 2,
           "message": "WordPress Admin Brute Force Attempt",
           "classtype": "web-application-attack"
         },
@@ -3132,7 +3132,7 @@
       "suricata": [
         {
           "sid": 1000018,
-          "rev": 1,
+          "rev": 2,
           "message": "WordPress User Enumeration",
           "classtype": "web-application-attack"
         }

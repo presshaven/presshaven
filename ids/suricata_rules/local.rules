@@ -169,9 +169,23 @@ alert http any any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2024-50508 System File Dow
 # OWASP WSTG-ATHN-04 (brute force), WSTG-IDNT-04 (user enumeration),
 # WSTG-CONF-05 (sensitive file exposure), WSTG-INFO-02 (fingerprinting)
 #--------------------------------------------------------------------------
-alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Admin Brute Force Attempt"; flow:established,to_server; content:"POST"; http_method; content:"wp-login.php"; http_uri; content:"log="; http_client_body; content:"pwd="; http_client_body; threshold:type limit, track by_src, count 5, seconds 60; classtype:web-application-attack; sid:1000017; rev:1;)
+# rev:2 -- `threshold:type limit, count 5` fired on the FIRST login POST
+# (type limit alerts on matches 1..N, then suppresses), so a single
+# legitimate admin login read as "brute force" (confirmed live: one POST
+# /wp-login.php from the dashboard's embedded browser). Switched to
+# detection_filter, which alerts only from the Nth match onward -- i.e. once
+# a burst of >=5 login POSTs/60s actually looks like credential guessing --
+# and added the internal health-probe UA exclusion, matching sid:1000057.
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Admin Brute Force Attempt"; flow:established,to_server; content:"POST"; http_method; content:"wp-login.php"; http_uri; content:"log="; http_client_body; content:"pwd="; http_client_body; content:!"honeypot-internal-healthprobe"; http_user_agent; detection_filter:track by_src, count 5, seconds 60; classtype:web-application-attack; sid:1000017; rev:2;)
 
-alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress User Enumeration"; flow:established,to_server; content:"wp-json/wp/v2/users"; http_uri; classtype:web-application-attack; sid:1000018; rev:1;)
+# rev:2 -- `content:"wp-json/wp/v2/users"` also matched the REST route
+# `/wp-json/wp/v2/users/me?context=edit`, which the block editor and profile
+# screen fetch for the CURRENT user on every authenticated admin page load
+# (confirmed live: status 200, Referer /wp-admin/, logged-in session) -- that
+# is self-lookup, not enumeration. Excludes the `me` self-endpoint and any
+# request carrying the `wordpress_logged_in` session cookie, so genuine
+# unauthenticated enumeration of `/users` or `/users/<id>` still fires.
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress User Enumeration"; flow:established,to_server; content:"wp-json/wp/v2/users"; http_uri; content:!"users/me"; http_uri; content:!"wordpress_logged_in"; http_cookie; classtype:web-application-attack; sid:1000018; rev:2;)
 
 alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Config File Access Attempt"; flow:established,to_server; content:"wp-config.php"; http_uri; classtype:web-application-attack; sid:1000019; rev:1;)
 
