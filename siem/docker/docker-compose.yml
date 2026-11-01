@@ -133,6 +133,19 @@ services:
       # real fix, not a suppression of a real problem, since there's
       # nothing this VM could ever successfully telemeter to anyway.
       - TELEMETRY_ENABLED=false
+      # Kibana encrypts some saved objects at rest (Fleet's Agent
+      # binary-source API key, alerting/connector credentials, saved-object
+      # session info). Without a persistent xpack.encryptedSavedObjects
+      # key Fleet setup aborts with "Agent binary source needs encrypted
+      # saved object api key to be set" and retries forever (confirmed live:
+      # "Fleet setup attempt N failed ... FleetEncryptedSavedObjectEncryption
+      # KeyRequired"). The other two keys (session security + reporting) are
+      # otherwise regenerated on every container start, which silently
+      # invalidates existing sessions/reports -- pinning all three from the
+      # .env makes restarts stable. Each must be >= 32 characters.
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${KIBANA_ENCRYPTEDSAVEDOBJECTS_KEY}
+      - XPACK_SECURITY_ENCRYPTIONKEY=${KIBANA_SECURITY_ENCRYPTION_KEY}
+      - XPACK_REPORTING_ENCRYPTIONKEY=${KIBANA_REPORTING_ENCRYPTION_KEY}
     mem_limit: ${KIBANA_MEM_LIMIT:-2147483648}
     ports:
       - "${KIBANA_PORT}:${KIBANA_PORT}"
