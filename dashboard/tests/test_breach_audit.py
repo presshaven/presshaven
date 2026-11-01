@@ -194,6 +194,211 @@ class RoutingProbeTests(unittest.TestCase):
         self.assertFalse([r for r in results if r.outcome == ba.FAIL])
 
 
+class EdgeProjectScopingTests(unittest.TestCase):
+    def test_falls_back_to_default_when_env_missing(self):
+        with mock.patch.object(ba, "load_project_env",
+                               side_effect=ba.EnvUploadError("no env")):
+            self.assertEqual(ba._edge_project(mock.Mock(remote=None)),
+                             ba.EDGE_COMPOSE_PROJECT_DEFAULT)
+
+    def test_rejects_unsafe_project_name(self):
+        with mock.patch.object(ba, "load_project_env",
+                               return_value={"COMPOSE_PROJECT_NAME": "bad; rm -rf"}):
+            self.assertEqual(ba._edge_project(mock.Mock(remote=None)),
+                             ba.EDGE_COMPOSE_PROJECT_DEFAULT)
+
+    def test_uses_configured_project_name(self):
+        with mock.patch.object(ba, "load_project_env",
+                               return_value={"COMPOSE_PROJECT_NAME": "edge-stack_2"}):
+            self.assertEqual(ba._edge_project(mock.Mock(remote=None)), "edge-stack_2")
+
+    def test_running_containers_filters_by_project_label(self):
+        captured = {}
+
+        def fake_build_shell(cmd):
+            captured["cmd"] = cmd
+            return ["sh", "-c", cmd], None
+
+        target = mock.Mock(remote=None)
+        target.build_shell.side_effect = fake_build_shell
+        with mock.patch.object(ba, "load_project_env",
+                               return_value={"COMPOSE_PROJECT_NAME": "edgeproj"}), \
+             mock.patch.object(ba, "run_checked",
+                               return_value=mock.Mock(stdout="edgeproj-reverse_proxy-1\n")):
+            names = ba._running_containers(target)
+        self.assertIn("label=com.docker.compose.project=edgeproj", captured["cmd"])
+        self.assertEqual(names, ["edgeproj-reverse_proxy-1"])
+
+
+class CaughtBypassedTests(unittest.TestCase):
+    def test_diverted_is_caught_not_bypassed(self):
+        r = ba._HttpResult(404, "honeypot", "100")
+        self.assertTrue(ba._caught(r))
+        self.assertFalse(ba._bypassed(r))
+
+    def test_scored_production_is_caught_not_bypassed(self):
+        r = ba._HttpResult(200, "production", "40")
+        self.assertTrue(ba._caught(r))
+        self.assertFalse(ba._bypassed(r))
+
+    def test_edge_block_is_caught(self):
+        self.assertTrue(ba._caught(ba._HttpResult(403, None, None)))
+        self.assertTrue(ba._caught(ba._HttpResult(400, None, None)))
+
+    def test_production_unscored_served_is_bypassed(self):
+        r = ba._HttpResult(200, "production", "0")
+        self.assertFalse(ba._caught(r))
+        self.assertTrue(ba._bypassed(r))
+
+    def test_baseline_not_caught_skips_obfuscations(self):
+        # Edge serves everything clean (no divert, no score, 200): the category
+        # is not applicable -> one WARN baseline + one SKIP, never a pile of
+        # WARN/FAIL obfuscation rows.
+        def fake_req(base_url, path, secret, **kw):
+            return ba._HttpResult(200, "production", "0")
+        with mock.patch.object(ba, "_edge_request", side_effect=fake_req):
+            results = ba.run_whitelist("https://localhost", "secret", log=lambda s: None)
+        self.assertFalse([r for r in results if r.outcome == ba.FAIL])
+        self.assertTrue([r for r in results if r.outcome == ba.SKIP])
+        # obfuscation rows must not have run
+        self.assertFalse([r for r in results if r.probe.startswith("obfuscation:")])
+
+
+class ProductionHardeningTests(unittest.TestCase):
+    """CAT_PROD_HARDENING: a production vulnerability must not bypass honeypots."""
+
+    _VULN = [("woocommerce-payments", "CVE-2023-28121", "WooCommerce Payments"),
+             ("wp-file-manager", "CVE-2020-25213", "File Manager")]
+
+    def _run(self, fake_req, installed, names=("proj-production_eshop-1",),
+             secret="s"):
+        target = mock.Mock(remote=None)
+        with mock.patch.object(ba, "_vulnerable_plugin_dirs", return_value=self._VULN), \
+             mock.patch.object(ba, "_production_plugins", return_value=installed), \
+             mock.patch.object(ba, "_prod_container",
+                               return_value="proj-production_eshop-1"), \
+             mock.patch.object(ba, "_docker_exec", return_value=(0, "BLOCKED")), \
+             mock.patch.object(ba, "discover_pools", return_value={}), \
+             mock.patch.object(ba, "_edge_request", side_effect=fake_req):
+            return ba.run_production_hardening(
+                target, list(names), "https://localhost", secret, log=lambda s: None)
+
+    def _plugin_rows(self, results):
+        return [r for r in results if r.probe.startswith("exploit of")]
+
+    def test_diverted_vuln_plugin_is_pass(self):
+        results = self._run(lambda *a, **k: ba._HttpResult(404, "honeypot", "100"),
+                            installed={"woocommerce-payments"})
+        rows = self._plugin_rows(results)
+        self.assertTrue(rows)
+        self.assertTrue(all(r.outcome == ba.PASS for r in rows))
+
+    def test_bypassed_plugin_present_on_prod_is_critical_fail(self):
+        # Served to production unscored AND the plugin is installed -> real bypass.
+        def fake(base_url, path, secret, **kw):
+            return ba._HttpResult(200, "production", "0")
+        results = self._run(fake, installed={"woocommerce-payments"})
+        wc = [r for r in self._plugin_rows(results) if "woocommerce-payments" in r.probe]
+        self.assertEqual(len(wc), 1)
+        self.assertEqual(wc[0].outcome, ba.FAIL)
+        self.assertEqual(wc[0].severity, ba.CRITICAL)
+
+    def test_bypassed_plugin_absent_is_warn(self):
+        def fake(base_url, path, secret, **kw):
+            return ba._HttpResult(200, "production", "0")
+        results = self._run(fake, installed={"some-other-plugin"})
+        wc = [r for r in self._plugin_rows(results) if "woocommerce-payments" in r.probe]
+        self.assertEqual(wc[0].outcome, ba.WARN)
+
+    def test_bypassed_inventory_unknown_is_warn(self):
+        def fake(base_url, path, secret, **kw):
+            return ba._HttpResult(200, "production", "0")
+        results = self._run(fake, installed=None)
+        wc = [r for r in self._plugin_rows(results) if "woocommerce-payments" in r.probe]
+        self.assertEqual(wc[0].outcome, ba.WARN)
+
+    def test_header_only_cve_probe_present(self):
+        results = self._run(lambda *a, **k: ba._HttpResult(404, "honeypot", "100"),
+                            installed={"woocommerce-payments"})
+        hdr = [r for r in results if "header-only" in r.probe]
+        self.assertEqual(len(hdr), 1)
+        self.assertEqual(hdr[0].outcome, ba.PASS)
+
+    def test_no_secret_skips_plugin_probes(self):
+        results = self._run(lambda *a, **k: ba._HttpResult(404, "honeypot", "100"),
+                            installed=None, secret="")
+        self.assertFalse(self._plugin_rows(results))
+        self.assertTrue([r for r in results if r.outcome == ba.SKIP])
+
+    def test_missing_production_eshop_skips_egress(self):
+        target = mock.Mock(remote=None)
+        with mock.patch.object(ba, "_prod_container", return_value=None), \
+             mock.patch.object(ba, "_vulnerable_plugin_dirs", return_value=self._VULN), \
+             mock.patch.object(ba, "_edge_request",
+                               side_effect=lambda *a, **k: ba._HttpResult(404, "honeypot", "100")):
+            results = ba.run_production_hardening(
+                target, [], "https://localhost", "s", log=lambda s: None)
+        self.assertTrue([r for r in results if r.outcome == ba.SKIP
+                         and "production shop present" in r.probe])
+
+    def test_egress_open_docker_daemon_is_fail(self):
+        dests = ba._production_egress_destinations([])
+        daemon = [d for d in dests if "Docker daemon" in d.label]
+        self.assertTrue(daemon)
+        self.assertTrue(all(d.open_outcome == ba.FAIL for d in daemon))
+
+    def test_egress_open_internet_is_warn(self):
+        dests = ba._production_egress_destinations([])
+        inet = [d for d in dests if "internet" in d.label.lower()]
+        self.assertTrue(inet)
+        self.assertTrue(all(d.open_outcome == ba.WARN for d in inet))
+
+    def test_category_wired_into_maps(self):
+        self.assertIn(ba.CAT_PROD_HARDENING, ba.ALL_CATEGORIES)
+        self.assertIn(ba.CAT_PROD_HARDENING, ba.CATEGORY_LABELS)
+        self.assertIn(ba.CAT_PROD_HARDENING, ba.CATEGORY_INTRO)
+
+
+class SocketMountOwnershipTests(unittest.TestCase):
+    def _run(self, names, inspect_map):
+        def fake_inspect(target, container, fmt, timeout=15.0):
+            if ".Mounts" in fmt and "Source" in fmt:
+                return inspect_map.get(container, "")
+            return ""
+        target = mock.Mock(remote=None)
+        target.build_shell.return_value = (["sh", "-c", "docker ps"], None)
+        with mock.patch.object(ba, "_edge_project", return_value="proj"), \
+             mock.patch.object(ba, "_prod_container", return_value=None), \
+             mock.patch.object(ba, "run_checked",
+                               return_value=mock.Mock(stdout="")), \
+             mock.patch.object(ba, "_inspect", side_effect=fake_inspect):
+            return ba.run_production_network(target, names, log=lambda s: None)
+
+    def test_pool_manager_socket_is_pass(self):
+        results = self._run(
+            ["proj-pool_manager-1"],
+            {"proj-pool_manager-1": "/var/run/docker.sock\n"})
+        sock = [r for r in results if "Docker socket" in r.probe]
+        self.assertEqual(len(sock), 1)
+        self.assertEqual(sock[0].outcome, ba.PASS)
+
+    def test_socket_proxy_is_pass(self):
+        results = self._run(
+            ["proj-docker_socket_proxy-1"],
+            {"proj-docker_socket_proxy-1": "/var/run/docker.sock\n"})
+        sock = [r for r in results if "Docker socket" in r.probe]
+        self.assertEqual(len(sock), 1)
+        self.assertEqual(sock[0].outcome, ba.PASS)
+
+    def test_other_container_socket_is_fail(self):
+        results = self._run(
+            ["proj-vector_outbound-1"],
+            {"proj-vector_outbound-1": "/var/run/docker.sock\n"})
+        sock = [r for r in results if "Docker socket" in r.probe]
+        self.assertEqual(len(sock), 1)
+        self.assertEqual(sock[0].outcome, ba.FAIL)
+
+
 class PrivilegeProbeTests(unittest.TestCase):
     def test_privileged_container_fails(self):
         def fake_inspect(target, container, fmt, timeout=15.0):

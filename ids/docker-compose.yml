@@ -1992,6 +1992,42 @@ services:
     pids_limit: 50
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Read-only Docker API proxy for Vector's container-log collection.
+  # ---------------------------------------------------------------------------
+  # vector_outbound ships logs OUT to the SIEM, so it is egress-capable. Giving
+  # an egress-capable container the raw /var/run/docker.sock would make a
+  # compromise of it a full host takeover (a `:ro` bind-mount on a *socket* is
+  # cosmetic -- it does not restrict the Docker API, which is request/response
+  # over that socket). Instead, this proxy holds the socket and exposes only a
+  # least-privilege, READ-ONLY slice of the API: listing/inspecting containers
+  # and the event stream (what Vector's docker_logs source needs), nothing that
+  # can create, exec into, or modify a container. It publishes no host port and
+  # lives only on monitoring_network, so only vector_outbound can reach it.
+  docker_socket_proxy:
+    logging: *default-logging
+    image: tecnativa/docker-socket-proxy:0.3.0
+    profiles:
+      - elk
+    environment:
+      # Default-deny: every API section below is off unless set to 1.
+      - CONTAINERS=1   # GET /containers/json, /containers/{id}/json, .../logs
+      - EVENTS=1       # GET /events  (docker_logs watches for new containers)
+      - PING=1         # GET /_ping   (client health check)
+      - POST=0         # no mutating calls at all (create/exec/start/stop/...)
+    volumes:
+      # The ONLY container that touches the real socket. :ro here is defence in
+      # depth; the actual restriction is the API gating above.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - monitoring_network
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+    cpus: "0.10"
+    pids_limit: 50
+    restart: unless-stopped
+
   vector_outbound:
     logging: *default-logging
     image: timberio/vector:0.60.0-debian
@@ -2001,6 +2037,8 @@ services:
     depends_on:
       reverse_proxy:
         condition: service_started
+      docker_socket_proxy:
+        condition: service_started
     volumes:
       - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
       - ./vector/certs:/etc/vector/certs:ro
@@ -2008,9 +2046,9 @@ services:
       - ./nginx_logs:/var/log/nginx:ro
       - ./vector/data:/var/lib/vector
       - ./vector/logs:/var/log/vector
-      # Docker socket and container logs for monitoring all containers
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Container logs are collected over the read-only docker_socket_proxy
+      # (see its service above and vector.yaml's docker_in source) -- NOT by
+      # mounting the Docker socket or the raw container log tree here.
       # Redis logs (if available) – named volume (vmhgfs bind-mount does not support chown)
       - redis_data:/var/log/redis:ro
     environment:

@@ -2,11 +2,12 @@
 # This configuration collects Docker container, Suricata, Nginx, and Redis logs
 
 sources:
-  # Docker container logs, read directly from the Docker daemon (includes
-  # container metadata natively, unlike tailing the raw json-file logs)
+  # Docker container logs, read over the read-only docker_socket_proxy (NOT the
+  # raw socket -- see docker-compose.yml's docker_socket_proxy service). Still
+  # gets container metadata natively, unlike tailing the raw json-file logs.
   docker_in:
     type: docker_logs
-    docker_host: unix:///var/run/docker.sock
+    docker_host: http://docker_socket_proxy:2375
     include_labels:
       - "com.docker.compose.project=${COMPOSE_PROJECT_NAME:-honeypot-ids-system-v1}"
 

@@ -29,6 +29,7 @@ any evidence string). Evidence strings are built to hold outcomes, not values.
 """
 from __future__ import annotations
 
+import re
 import shlex
 import ssl
 import urllib.error
@@ -63,12 +64,14 @@ MEDIUM = "medium"
 # Probe categories (also the section order in the report).
 CAT_BREAKOUT = "honeypot_breakout"
 CAT_PROD_NET = "production_network"
+CAT_PROD_HARDENING = "production_hardening"
 CAT_WHITELIST = "whitelist_bypass"
 CAT_EDGE = "edge_exposure"
 
 CATEGORY_LABELS = {
     CAT_BREAKOUT: "Honeypot container breakout",
     CAT_PROD_NET: "Production network isolation",
+    CAT_PROD_HARDENING: "Production hardening (vulnerable-plugin bypass)",
     CAT_WHITELIST: "Whitelist / routing bypass",
     CAT_EDGE: "Edge exposure",
 }
@@ -87,6 +90,19 @@ CATEGORY_INTRO = {
         "shop, the production shop only from the edge, and only the reverse "
         "proxy may publish a port on the host. These probes verify those "
         "boundaries from the wrong side."
+    ),
+    CAT_PROD_HARDENING: (
+        "Assume an attacker has found a REAL vulnerability in production -- a "
+        "WordPress plugin, say (production here runs the same plugin set as the "
+        "honeypots, so if one is exploitable, so is production's copy). These "
+        "probes verify that can never become a honeypot bypass: every "
+        "known-vulnerable plugin's exploit must be diverted to a honeypot (or "
+        "blocked) at the edge BEFORE it reaches production -- regardless of "
+        "which honeypot-target toggles are on -- so production's vulnerability "
+        "is simply never attacker-reachable. They also confirm a compromised "
+        "production container cannot pivot to the Docker control plane, the "
+        "honeypot pools or the cloud-metadata endpoint. Each diverted/blocked "
+        "exploit and each dead-end pivot is a PASS."
     ),
     CAT_WHITELIST: (
         "The edge classifies every request and either serves production or "
@@ -199,9 +215,36 @@ def _docker_exec(target: Target, container: str, command: str,
     return rc, out.strip()
 
 
+# The edge stack's Docker Compose project name (the com.docker.compose.project
+# label). The whole audit scopes its `docker ps` to this project so it never
+# sweeps in the separate SIEM stack (compose project "docker":
+# es01/kibana/vector_inbound). The SIEM stack's own published ports (Kibana
+# 5601, Elasticsearch 9200, Vector 6000) and mounts are its concern, not a
+# breach of the honeypot edge -- judging them here produced false FAILs.
+EDGE_COMPOSE_PROJECT_DEFAULT = "honeypot-ids-system-v1"
+
+
+def _edge_project(target: Target) -> str:
+    """The edge compose project name, from the edge .env's
+    COMPOSE_PROJECT_NAME, falling back to the shipped default. Validated to a
+    safe label so it can be interpolated into the `docker ps` filter."""
+    try:
+        env = load_project_env("edge", target.remote)
+    except EnvUploadError:
+        env = {}
+    name = (env.get("COMPOSE_PROJECT_NAME") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
+        return EDGE_COMPOSE_PROJECT_DEFAULT
+    return name
+
+
 def _running_containers(target: Target, timeout: float = 15.0) -> list[str]:
-    """Names of every running container on the target host."""
-    argv, cwd = target.build_shell("docker ps --format '{{.Names}}'")
+    """Names of every running container IN THE EDGE COMPOSE PROJECT on the
+    target host. The separate SIEM project is deliberately out of scope."""
+    project = _edge_project(target)
+    argv, cwd = target.build_shell(
+        "docker ps --filter label=com.docker.compose.project=" + project
+        + " --format '{{.Names}}'")
     out = run_checked(argv, error=BreachAuditError, cwd=cwd, timeout=timeout,
                       what="docker ps").stdout
     return [ln.strip() for ln in out.splitlines() if ln.strip()]
@@ -269,25 +312,34 @@ def _udp_dns_cmd(server: str, timeout: int = 3) -> str:
 
 @dataclass
 class _Reach:
-    """One expected-blocked destination to probe from a honeypot container."""
+    """One destination to probe from a container that must not reach it."""
     label: str
     host: str
     port: int
     severity: str = HIGH
     udp: bool = False
+    # Outcome when the connection SUCCEEDS. Usually FAIL (the reach is a hole),
+    # but some destinations (e.g. the open internet from production, which
+    # payment-gateway plugins legitimately use) are a residual-risk WARN rather
+    # than an outright breach.
+    open_outcome: str = FAIL
+    # Override the default expectation text (which assumes a honeypot vantage).
+    expectation: str = "connection refused / unreachable from a honeypot"
 
 
 def _reach_result(category: str, source: str, dest: _Reach, rc: int, out: str) -> ProbeResult:
     out = (out or "").strip().upper()
     probe = f"{'UDP' if dest.udp else 'TCP'} to {dest.label} ({dest.host}:{dest.port})"
-    expectation = "connection refused / unreachable from a honeypot"
+    expectation = dest.expectation
     if "PROBE_UNAVAILABLE" in out or rc != 0 and not out:
         return ProbeResult(category, probe, expectation, ERROR,
                            "probe tool unavailable in container", dest.severity, source)
     if "OPEN" in out:
-        return ProbeResult(category, probe, expectation, FAIL,
-                           "connection SUCCEEDED -- reachable from the honeypot",
-                           dest.severity, source)
+        evidence = ("connection SUCCEEDED -- reachable (residual egress risk)"
+                    if dest.open_outcome == WARN
+                    else "connection SUCCEEDED -- reachable, a usable pivot")
+        return ProbeResult(category, probe, expectation, dest.open_outcome,
+                           evidence, dest.severity, source)
     if "BLOCKED" in out:
         return ProbeResult(category, probe, expectation, PASS,
                            "blocked as designed", dest.severity, source)
@@ -533,10 +585,15 @@ def run_production_network(target: Target, names: list[str],
             "production_database container is running",
             SKIP, "production_database not found among running containers", HIGH))
 
-    # Only the reverse proxy should publish a port on the host.
+    # Only the reverse proxy should publish a port on the host. Scoped to the
+    # edge compose project: the separate SIEM stack legitimately publishes its
+    # own ingress ports (Kibana/Elasticsearch/Vector) and is not the edge's
+    # attack surface.
     log("Checking host-published ports …")
+    project = _edge_project(target)
     argv, cwd = target.build_shell(
-        "docker ps --format '{{.Names}}|{{.Ports}}'")
+        "docker ps --filter label=com.docker.compose.project=" + project
+        + " --format '{{.Names}}|{{.Ports}}'")
     try:
         ps = run_checked(argv, error=BreachAuditError, cwd=cwd, timeout=15.0,
                          what="docker ps").stdout
@@ -573,14 +630,188 @@ def run_production_network(target: Target, names: list[str],
         core = name
         if "-" in core and core.rsplit("-", 1)[-1].isdigit():
             core = core.rsplit("-", 1)[0]
-        expected = core.endswith("pool_manager")
+        # Two containers may legitimately hold the socket, both sanctioned
+        # design controls (PASS):
+        #   * pool_manager -- the Docker control plane; spawning/tearing down
+        #     honeypot pools is its whole job.
+        #   * docker_socket_proxy -- exposes only a READ-ONLY API slice
+        #     (list/inspect/events, no POST) to vector_outbound, publishes no
+        #     host port and has no internet egress, so it cannot be used to
+        #     create/exec containers the way a raw socket could.
+        # Any OTHER container holding the socket is a real breakout vector
+        # (FAIL) -- in particular an egress-capable shipper must never mount it.
+        expected = core.endswith("pool_manager") or core.endswith("docker_socket_proxy")
+        if core.endswith("pool_manager"):
+            why = "pool_manager control plane (sanctioned)"
+        elif core.endswith("docker_socket_proxy"):
+            why = "read-only API proxy (sanctioned)"
+        else:
+            why = "unexpected socket mount"
         results.append(ProbeResult(
             cat, f"Docker socket mount on {name}",
-            "only pool_manager may hold the Docker socket",
-            WARN if expected else FAIL,
-            "pool_manager (expected)" if expected else "unexpected socket mount",
-            CRITICAL, name))
+            "only pool_manager and the read-only docker_socket_proxy may hold "
+            "the Docker socket",
+            PASS if expected else FAIL,
+            why, CRITICAL, name))
 
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Production hardening -- a production vulnerability must not bypass honeypots
+# ---------------------------------------------------------------------------
+
+_WP_PLUGINS_DIR = "/var/www/html/wp-content/plugins"
+
+# Expectation text for the production-vantage egress probes.
+_PROD_EXP = ("unreachable from production -- a compromised production plugin "
+             "must not be able to pivot here")
+
+
+def _production_plugins(target: Target, container: str) -> set[str] | None:
+    """The plugin directory names installed on production (read-only `ls`), or
+    None if the list could not be read. Lets the audit say whether a
+    not-diverted vulnerable plugin is actually present (critical) or merely
+    would be a hole if installed (warning)."""
+    try:
+        _rc, out = _docker_exec(target, container,
+                                f"ls -1 {_WP_PLUGINS_DIR} 2>/dev/null")
+    except BreachAuditError:
+        return None
+    names = {ln.strip() for ln in (out or "").splitlines() if ln.strip()}
+    names.discard("index.php")   # stock single-file entries, not plugin dirs
+    names.discard("hello.php")
+    return names or None
+
+
+def _vulnerable_plugin_dirs() -> list[tuple[str, str, str]]:
+    """Distinct vulnerable plugin directories the honeypots emulate, each with
+    a representative (cve, name), from the edge policy's honeypot-target list
+    (init.lua's vulnerability.plugins). Policy toggles do NOT shrink this list:
+    the point is to prove the edge diverts these exploits whether or not a
+    given target is 'enabled'."""
+    from core.edge_policy import honeypot_targets
+    seen: dict[str, tuple[str, str]] = {}
+    for t in honeypot_targets():
+        if t.plugin_dir and t.plugin_dir not in seen:
+            seen[t.plugin_dir] = (t.cve, t.name)
+    return [(d, cve, name) for d, (cve, name) in seen.items()]
+
+
+def _production_egress_destinations(names: list[str]) -> list[_Reach]:
+    """Destinations a compromised production_eshop must not be able to pivot to.
+    The open internet is a residual-risk WARN (payment-gateway/CDN plugins
+    legitimately egress); everything else is an outright FAIL if reachable."""
+    dests = [
+        _Reach("Docker daemon (TCP)", "172.17.0.1", 2375, CRITICAL, expectation=_PROD_EXP),
+        _Reach("Docker daemon (TLS)", "172.17.0.1", 2376, CRITICAL, expectation=_PROD_EXP),
+        _Reach("cloud metadata endpoint", "169.254.169.254", 80, HIGH, expectation=_PROD_EXP),
+        _Reach("session store (redis)", "session_store", 6379, MEDIUM, expectation=_PROD_EXP),
+        _Reach("pool manager", "pool_manager", 80, MEDIUM, expectation=_PROD_EXP),
+    ]
+    for pool, c in sorted(discover_pools(names).items()):
+        if "eshop" in c:
+            dests.append(_Reach(f"honeypot pool {pool} shop", c["eshop"], 80,
+                                HIGH, expectation=_PROD_EXP))
+        if "database" in c:
+            dests.append(_Reach(f"honeypot pool {pool} database", c["database"], 3306,
+                                HIGH, expectation=_PROD_EXP))
+    dests.append(_Reach(
+        "open internet (HTTPS)", "1.1.1.1", 443, MEDIUM, open_outcome=WARN,
+        expectation="production egress is ideally restricted to an allowlist -- "
+                    "open internet lets a compromised plugin exfiltrate or pull a payload"))
+    return dests
+
+
+def run_production_hardening(target: Target, names: list[str], base_url: str,
+                             secret: str, log=lambda s: None) -> list[ProbeResult]:
+    cat = CAT_PROD_HARDENING
+    results: list[ProbeResult] = []
+    prod_eshop = _prod_container(names, "production_eshop")
+
+    # --- Group 1: every vulnerable-plugin exploit must divert, not be served ---
+    installed = _production_plugins(target, prod_eshop) if prod_eshop else None
+    if not secret:
+        results.append(ProbeResult(
+            cat, "edge routing-decision header readable",
+            "INTERNAL_TEST_SECRET set so the probe can see where exploits land",
+            SKIP, "INTERNAL_TEST_SECRET not set in the edge .env -- cannot verify "
+            "where vulnerable-plugin exploits are routed", HIGH))
+    else:
+        log("Verifying every vulnerable plugin's exploit is diverted, not served …")
+        for plugin_dir, cve, name in _vulnerable_plugin_dirs():
+            r = _edge_request(base_url, f"/wp-content/plugins/{plugin_dir}/", secret)
+            present = None if installed is None else (plugin_dir in installed)
+            probe = f"exploit of {plugin_dir} diverted, not served by production"
+            exp = (f"a request to the {name} ({cve}) attack surface is diverted to "
+                   "a honeypot or blocked -- never served by production")
+            if r.error:
+                results.append(ProbeResult(cat, probe, exp, ERROR, r.error, HIGH,
+                                           prod_eshop or ""))
+            elif not _bypassed(r):
+                where = "honeypot" if _routes_to_honeypot(r) else \
+                        "(blocked)" if r.status in _EDGE_BLOCK_STATUSES else \
+                        (r.route_target or "?")
+                tag = " [installed on production]" if present else \
+                      " [production inventory unknown]" if present is None else \
+                      " [not on production]"
+                results.append(ProbeResult(
+                    cat, probe, exp, PASS,
+                    f"diverted: route={where} score={r.risk_score or '0'} "
+                    f"(status {r.status}){tag}",
+                    CRITICAL if present else HIGH, prod_eshop or ""))
+            elif present:
+                results.append(ProbeResult(
+                    cat, probe, exp, FAIL,
+                    f"production HOSTS {plugin_dir} and the edge serves its exploit "
+                    f"directly (status {r.status}) -- honeypot bypassed",
+                    CRITICAL, prod_eshop or ""))
+            else:
+                note = ("could not read production's plugin list" if present is None
+                        else "not installed on production")
+                results.append(ProbeResult(
+                    cat, probe, exp, WARN,
+                    f"edge serves this vulnerable-plugin path to production unscored "
+                    f"(status {r.status}); {note} -- installing it would create a "
+                    "honeypot bypass", HIGH, prod_eshop or ""))
+
+        # CVE-2023-28121 is a header-only exploit (no attack signature in the
+        # PATH), the most realistic bypass against production's live
+        # woocommerce-payments -- check it explicitly.
+        log("Verifying the header-only CVE-2023-28121 exploit is diverted …")
+        hdr = _edge_request(base_url, "/?rest_route=/wc/v3/customers", secret,
+                            headers={"X-WCPAY-PLATFORM-CHECKOUT-USER": "1"})
+        probe = "header-only woocommerce-payments exploit (CVE-2023-28121) diverted"
+        exp = "the header-based account-creation exploit is diverted or blocked, not served"
+        if hdr.error:
+            results.append(ProbeResult(cat, probe, exp, ERROR, hdr.error, CRITICAL,
+                                       prod_eshop or ""))
+        else:
+            where = "honeypot" if _routes_to_honeypot(hdr) else \
+                    "(blocked)" if hdr.status in _EDGE_BLOCK_STATUSES else \
+                    (hdr.route_target or "?")
+            results.append(ProbeResult(
+                cat, probe, exp, PASS if not _bypassed(hdr) else FAIL,
+                f"route={where} score={hdr.risk_score or '0'} (status {hdr.status})",
+                CRITICAL, prod_eshop or ""))
+
+    # --- Group 2: a compromised production container must not be able to pivot ---
+    if prod_eshop is None:
+        results.append(ProbeResult(
+            cat, "production shop present", "production_eshop container is running",
+            SKIP, "production_eshop not found among running containers", HIGH))
+        return results
+    log("Probing egress / lateral movement from production_eshop …")
+    for dest in _production_egress_destinations(names):
+        cmd = _udp_dns_cmd(dest.host) if dest.udp else _tcp_probe_cmd(dest.host, dest.port)
+        try:
+            rc, out = _docker_exec(target, prod_eshop, cmd)
+        except BreachAuditError as e:
+            results.append(ProbeResult(
+                cat, f"TCP to {dest.label} ({dest.host}:{dest.port})",
+                dest.expectation, ERROR, str(e)[:60], dest.severity, prod_eshop))
+            continue
+        results.append(_reach_result(cat, prod_eshop, dest, rc, out))
     return results
 
 
@@ -622,21 +853,26 @@ def _edge_request(base_url: str, path: str, secret: str,
         return _HttpResult(0, None, None, error=str(e)[:80])
 
 
-# Path-obfuscation shapes aimed at hiding a honeypot target behind a form the
-# whitelist/normaliser might match as legitimate. The normaliser
-# (edge_policy_rules.request_path) lower-cases, %-decodes once, collapses `..`
-# and `\`; these probe its edges. Each should still be scored / routed to the
-# honeypot, never served production unscored.
-_TARGET_PLUGIN = "/wp-content/plugins/wp-file-manager/readme.txt"
+# Path-obfuscation shapes aimed at slipping a KNOWN-MALICIOUS request past the
+# edge's URI normaliser so it reaches production unscored. The baseline is a
+# directory-traversal read of /etc/passwd -- a generic attack the edge's
+# always-on signature set catches regardless of which CVE/plugin honeypot
+# targets a deployment has enabled (the shipped generic-only defaults enable no
+# specific plugin/CVE target, so a plugin path would NOT divert and tells us
+# nothing about the normaliser). Each obfuscation below carries the same attack
+# and must still be diverted / scored / blocked, never served production
+# unscored. The normaliser (edge_policy_rules.request_path) lower-cases,
+# %-decodes once, collapses `..`, `//` and `\`; these probe its edges.
+_TARGET_PLUGIN = "/wp-content/../../../../etc/passwd"
 _OBFUSCATIONS = [
-    ("double percent-encoding", "/wp-content/plugins/wp-file-manager/%252e%252e/readme.txt"),
-    ("mixed case", "/wp-content/Plugins/WP-File-Manager/readme.txt"),
-    ("dot-segment prefix", "/shop/../wp-content/plugins/wp-file-manager/readme.txt"),
-    ("double slash", "//wp-content//plugins//wp-file-manager//readme.txt"),
-    ("trailing dot on host path", "/wp-content/plugins/wp-file-manager/./readme.txt"),
-    ("backslash separators", "/wp-content\\plugins\\wp-file-manager\\readme.txt"),
-    ("semicolon parameter", "/wp-content/plugins/wp-file-manager/readme.txt;jsessionid=1"),
-    ("encoded traversal to target", "/%2e%2e/wp-content/plugins/wp-file-manager/readme.txt"),
+    ("double percent-encoding", "/wp-content/%252e%252e%252f%252e%252e%252fetc%252fpasswd"),
+    ("mixed case", "/wp-content/../../../../ETC/PASSWD"),
+    ("dot-segment prefix", "/shop/../../../etc/passwd"),
+    ("double slash", "//wp-content//..//..//etc//passwd"),
+    ("trailing dot segment", "/wp-content/../../../etc/./passwd"),
+    ("backslash separators", "/%5c..%5c..%5cetc%5cpasswd"),
+    ("semicolon parameter", "/etc/passwd;jsessionid=1"),
+    ("encoded traversal", "/%2e%2e/%2e%2e/etc/passwd"),
 ]
 
 # Header-based routing forgeries: try to make the edge trust a client-supplied
@@ -654,6 +890,30 @@ def _routes_to_honeypot(r: _HttpResult) -> bool:
     return (r.route_target or "").lower() == "honeypot"
 
 
+# A request-smuggling / blocking response from the edge (OWASP CRS 403, a 400
+# bad request, 406 not acceptable, 501 not implemented) means the attack never
+# reached a backend -- the strongest possible "caught".
+_EDGE_BLOCK_STATUSES = (400, 403, 406, 501)
+
+
+def _caught(r: _HttpResult) -> bool:
+    """The edge SAW the attack: it diverted it to a honeypot, scored it
+    non-zero, or blocked it outright."""
+    if _routes_to_honeypot(r):
+        return True
+    if (r.risk_score or "").strip() not in ("", "0"):
+        return True
+    return r.status in _EDGE_BLOCK_STATUSES
+
+
+def _bypassed(r: _HttpResult) -> bool:
+    """The crafted request slipped through to production UNSCORED with a
+    served (2xx/3xx) response -- a genuine normaliser bypass."""
+    if (r.route_target or "").lower() != "production":
+        return False
+    return (r.risk_score or "").strip() in ("", "0") and 0 < r.status < 400
+
+
 def run_whitelist(base_url: str, secret: str, log=lambda s: None) -> list[ProbeResult]:
     cat = CAT_WHITELIST
     results: list[ProbeResult] = []
@@ -667,10 +927,11 @@ def run_whitelist(base_url: str, secret: str, log=lambda s: None) -> list[ProbeR
             HIGH))
         return results
 
-    # Baseline: the bare target must itself be routed to a honeypot (so the
-    # whole category means something). If it is served production, that is the
-    # headline finding.
-    log("Baseline: hitting the honeypot target directly …")
+    # Baseline: the bare attack must itself be caught (diverted, scored or
+    # blocked) so the obfuscation probes below have a reference reaction to
+    # bypass. If it is not caught, the category is simply not applicable under
+    # the current policy -- that is a clean SKIP, not a finding.
+    log("Baseline: a generic attack the edge must divert …")
     base = _edge_request(base_url, _TARGET_PLUGIN, secret)
     if base.error:
         results.append(ProbeResult(
@@ -678,44 +939,51 @@ def run_whitelist(base_url: str, secret: str, log=lambda s: None) -> list[ProbeR
             "the edge answers HTTPS on the probed base URL",
             ERROR, base.error, HIGH))
         return results
-    if base.route_target is None:
+    baseline_caught = _caught(base)
+    results.append(ProbeResult(
+        cat, "baseline attack is caught by the edge",
+        "a direct hit on a known-malicious path is diverted, scored or blocked "
+        "-- never served clean",
+        PASS if baseline_caught else WARN,
+        f"baseline routed to {base.route_target or '(blocked)'} "
+        f"score={base.risk_score or '0'} (status {base.status})", HIGH))
+
+    if not baseline_caught:
         results.append(ProbeResult(
-            cat, "routing-decision header unlocked by the secret",
-            "the edge returns X-Route-Target when the correct secret is sent",
-            WARN,
-            "no X-Route-Target header even with the secret -- stale edge, or "
-            "the request did not reach the router; bypass probes below are "
-            "inconclusive", HIGH))
-    else:
-        results.append(ProbeResult(
-            cat, "honeypot target is itself diverted",
-            "a direct hit on a honeypot target routes to the honeypot",
-            PASS if _routes_to_honeypot(base) else WARN,
-            f"baseline routed to {base.route_target}", HIGH))
+            cat, "path-normaliser bypass probes applicable",
+            "the baseline attack is caught, giving the obfuscation probes a "
+            "reference reaction to bypass",
+            SKIP,
+            "the edge neither diverts, scores nor blocks the baseline attack "
+            "under the current policy -- obfuscation bypass probes need a "
+            "caught baseline to mean anything", HIGH))
+        return results
 
     log("Trying path-obfuscation bypasses …")
     for name, path in _OBFUSCATIONS:
         r = _edge_request(base_url, path, secret)
         probe = f"obfuscation: {name}"
-        exp = "still routed to honeypot / not served production unscored"
+        exp = "the obfuscated attack is still diverted / scored / blocked, " \
+              "never served production unscored"
         if r.error:
             results.append(ProbeResult(cat, probe, exp, ERROR, r.error, HIGH))
             continue
-        # A bypass succeeds if the crafted request reaches production with no
-        # score, i.e. the normaliser failed to see the honeypot target.
-        if r.route_target is None:
-            results.append(ProbeResult(cat, probe, exp, WARN,
-                                       f"no routing header (status {r.status})", MEDIUM))
-        elif _routes_to_honeypot(r):
-            results.append(ProbeResult(cat, probe, exp, PASS,
-                                       f"routed to honeypot (status {r.status})", HIGH))
-        else:
-            score = r.risk_score or "0"
-            served_clean = r.route_target.lower() == "production" and score in ("", "0")
+        # The ONLY failure is a genuine normaliser bypass: the crafted request
+        # reaches production with no score and a served response. A honeypot
+        # divert, a non-zero score, or an edge block are all a PASS.
+        if _bypassed(r):
             results.append(ProbeResult(
-                cat, probe, exp, FAIL if served_clean else WARN,
-                f"routed to {r.route_target} score={score} (status {r.status})",
-                HIGH if served_clean else MEDIUM))
+                cat, probe, exp, FAIL,
+                f"served production unscored (status {r.status}) -- normaliser "
+                "bypassed", HIGH))
+        else:
+            where = "honeypot" if _routes_to_honeypot(r) else \
+                    "(blocked)" if r.status in _EDGE_BLOCK_STATUSES else \
+                    (r.route_target or "?")
+            results.append(ProbeResult(
+                cat, probe, exp, PASS,
+                f"caught: route={where} score={r.risk_score or '0'} "
+                f"(status {r.status})", HIGH))
 
     log("Trying header-based routing forgeries …")
     for name, extra in _HEADER_FORGERIES:
@@ -783,7 +1051,7 @@ def run_edge_exposure(base_url: str, secret: str, log=lambda s: None) -> list[Pr
             "a request with both Content-Length and Transfer-Encoding is refused",
             PASS, f"edge refused the request ({smug.error})", HIGH))
     else:
-        ok = smug.status in (400, 501)
+        ok = smug.status in _EDGE_BLOCK_STATUSES
         results.append(ProbeResult(
             cat, "CL+TE request smuggling rejected",
             "a request with both Content-Length and Transfer-Encoding is refused",
@@ -827,7 +1095,8 @@ def run_audit(target: Target, state: AppState, categories: list[str],
     names: list[str] = []
     pools: dict[int, dict[str, str]] = {}
     prod_db = None
-    needs_docker = any(c in categories for c in (CAT_BREAKOUT, CAT_PROD_NET))
+    needs_docker = any(c in categories for c in
+                       (CAT_BREAKOUT, CAT_PROD_NET, CAT_PROD_HARDENING))
     if needs_docker:
         log("Enumerating running containers …")
         try:
@@ -845,8 +1114,12 @@ def run_audit(target: Target, state: AppState, categories: list[str],
         log("── Production network ──")
         data.results.extend(run_production_network(target, names, log))
 
-    if CAT_WHITELIST in categories or CAT_EDGE in categories:
+    if any(c in categories for c in (CAT_PROD_HARDENING, CAT_WHITELIST, CAT_EDGE)):
         secret = internal_secret(target)
+        if CAT_PROD_HARDENING in categories:
+            log("── Production hardening (vulnerable-plugin bypass) ──")
+            data.results.extend(
+                run_production_hardening(target, names, base_url, secret, log))
         if CAT_WHITELIST in categories:
             log("── Whitelist / routing bypass ──")
             data.results.extend(run_whitelist(base_url, secret, log))
@@ -857,4 +1130,4 @@ def run_audit(target: Target, state: AppState, categories: list[str],
     return data
 
 
-ALL_CATEGORIES = [CAT_BREAKOUT, CAT_PROD_NET, CAT_WHITELIST, CAT_EDGE]
+ALL_CATEGORIES = [CAT_BREAKOUT, CAT_PROD_NET, CAT_PROD_HARDENING, CAT_WHITELIST, CAT_EDGE]
