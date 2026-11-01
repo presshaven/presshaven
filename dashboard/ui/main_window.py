@@ -318,6 +318,10 @@ class MainWindow(QMainWindow):
         self.overview_page = OverviewPage(state, self.security_feed)
         self.overview_page.open_page_requested.connect(self._open_page)
         self.overview_page.lifecycle_requested.connect(self._on_lifecycle_requested)
+        # The landing screen lists every other page as a clickable card; the
+        # page list and its labels live here, so hand the directory in.
+        self.overview_page.set_page_directory(
+            [(pid, PAGE_LABELS[pid]) for pid in PAGES if pid != "overview"])
         self.live_events_page = LiveEventsPage(self.security_feed, state)
         self.pipeline_page = PipelinePage(state)
         self.sessions_page = SessionsPage(state)

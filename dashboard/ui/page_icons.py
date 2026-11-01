@@ -89,6 +89,14 @@ def menu_icon(page_id: str, size: int = _ICON_SIZE) -> QIcon:
     return _icon(page_id, c["fg_muted"], c["fg"], c["selection_fg"], size)
 
 
+def page_pixmap(page_id: str, size: int = _ICON_SIZE, color: str | None = None) -> QPixmap:
+    """A single theme-colored pixmap of a page's icon, for places that show it
+    as a plain image (e.g. the Overview page-link cards) rather than as a QIcon
+    with hover/selected states. Defaults to the theme foreground color."""
+    c = theme.scheme_colors()
+    return _pixmap(page_id, color or c["fg"], size)
+
+
 def clear_cache() -> None:
     """Drop rendered pixmaps (used by tests after switching themes)."""
     _pixmap_cache.clear()

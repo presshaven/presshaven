@@ -38,6 +38,7 @@ class SuricataPage(QWidget):
         self.state = state
         self._alerts: list[suricata_ctl.SuricataAlert] = []
         self._shown_alerts: list[suricata_ctl.SuricataAlert] = []
+        self._ip_names: dict[str, str] = {}
         self._rules_text = ""
         self._rules: list[suricata_ctl.Rule] = []
         self._jobs: set[Job] = set()
@@ -56,6 +57,10 @@ class SuricataPage(QWidget):
         self.export_btn = QPushButton("Export logs…")
         self.export_btn.setToolTip("Save the alerts currently shown (after any filter) to a file")
         bar.addWidget(self.export_btn)
+        self.clear_btn = QPushButton("Clear logs")
+        self.clear_btn.setToolTip("Empty Suricata's eve.json alert log in the container, "
+                                  "discarding every recorded alert")
+        bar.addWidget(self.clear_btn)
         self.status = QLabel("")
         bar.addWidget(self.status, stretch=1)
         layout.addLayout(bar)
@@ -124,6 +129,7 @@ class SuricataPage(QWidget):
         self.refresh_btn.clicked.connect(self.refresh)
         self.copy_btn.clicked.connect(self._copy_logs)
         self.export_btn.clicked.connect(self._export_logs)
+        self.clear_btn.clicked.connect(self._clear_logs)
         self.target_combo.currentIndexChanged.connect(self.refresh)
         self.alert_filter.textChanged.connect(self._render_alerts)
         self.sev_combo.currentIndexChanged.connect(self._render_alerts)
@@ -169,7 +175,8 @@ class SuricataPage(QWidget):
         self._busy = True
         remote = self.target_combo.current_remote()
         self.status.setText("loading…")
-        self._run(lambda: (suricata_ctl.fetch_alerts(remote), suricata_ctl.fetch_rules_text(remote)),
+        self._run(lambda: (suricata_ctl.fetch_alerts(remote), suricata_ctl.fetch_rules_text(remote),
+                           suricata_ctl.container_ip_map(remote)),
                   self._loaded)
 
     def _loaded(self, result, error: str) -> None:
@@ -179,7 +186,7 @@ class SuricataPage(QWidget):
             self.error_banner.set_error(error or "no data", prefix="⚠ Suricata unreachable: ")
             return
         self.error_banner.set_error(None)
-        self._alerts, self._rules_text = result
+        self._alerts, self._rules_text, self._ip_names = result
         self._rules = suricata_ctl.parse_rules(self._rules_text)
         self.status.setText(f"{len(self._alerts)} recent alerts · {len(self._rules)} rules")
         self.apply_btn.setEnabled(False)
@@ -202,19 +209,34 @@ class SuricataPage(QWidget):
         self.alert_table.setRowCount(len(self._shown_alerts))
         for r, a in enumerate(self._shown_alerts):
             cells = [a.timestamp[:19].replace("T", " "), a.severity_label, a.signature,
-                     f"{a.src_ip}:{a.src_port}", f"{a.dest_ip}:{a.dest_port}", a.url]
+                     self._endpoint(a.src_ip, a.src_port), self._endpoint(a.dest_ip, a.dest_port), a.url]
             for c, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 if c == 1:
                     item.setForeground(QColor(_SEV_COLOR.get(a.severity_label, GREY)))
                 self.alert_table.setItem(r, c, item)
 
+    def _endpoint(self, ip: str, port: int) -> str:
+        """`name (ip:port)` when the IP belongs to a known container, else the
+        bare `ip:port` -- so the Alerts tab shows which container an alert's
+        source/target is, not just a bare Docker bridge address."""
+        base = f"{ip}:{port}" if port else ip
+        name = self._ip_names.get(ip)
+        return f"{name} ({base})" if name else base
+
     def _on_alert_selected(self) -> None:
         rows = self.alert_table.selectionModel().selectedRows()
         if not rows or rows[0].row() >= len(self._shown_alerts):
             return
         a = self._shown_alerts[rows[0].row()]
-        self.alert_detail.setPlainText("\n".join(f"{label}: {value}" for label, value in a.detail_lines()))
+        lines = []
+        for label, value in a.detail_lines():
+            if label == "Source":
+                value = self._endpoint(a.src_ip, a.src_port)
+            elif label == "Target":
+                value = self._endpoint(a.dest_ip, a.dest_port)
+            lines.append(f"{label}: {value}")
+        self.alert_detail.setPlainText("\n".join(lines))
 
     def _alerts_as_text(self) -> str:
         """The alerts currently shown (respecting the filter and severity
@@ -227,8 +249,8 @@ class SuricataPage(QWidget):
         for a in self._shown_alerts:
             rows.append("\t".join((
                 a.timestamp[:19].replace("T", " "), a.severity_label, a.signature,
-                str(a.sid), a.category, f"{a.src_ip}:{a.src_port}",
-                f"{a.dest_ip}:{a.dest_port}", a.url)))
+                str(a.sid), a.category, self._endpoint(a.src_ip, a.src_port),
+                self._endpoint(a.dest_ip, a.dest_port), a.url)))
         return "\n".join(rows)
 
     def _copy_logs(self) -> None:
@@ -240,6 +262,26 @@ class SuricataPage(QWidget):
         if export_logs(self, self._alerts_as_text(), name, "alerts",
                        "Tab-separated (*.tsv);;Text files (*.txt);;All files (*)"):
             self.status.setText(f"{len(self._shown_alerts)} alert(s) exported")
+
+    def _clear_logs(self) -> None:
+        if not confirm(self, "Clear Suricata alerts",
+                       "This empties eve.json in the suricata_ids container, permanently "
+                       "discarding every recorded alert. The rule set is not touched and "
+                       "Suricata keeps running. Continue?"):
+            return
+        remote = self.target_combo.current_remote()
+        self.clear_btn.setEnabled(False)
+        self.status.setText("clearing alerts…")
+
+        def done(_result, error):
+            self.clear_btn.setEnabled(True)
+            if error:
+                self.error_banner.set_error(error, prefix="⚠ Could not clear alerts: ")
+                self.status.setText("")
+            else:
+                self.status.setText("alerts cleared")
+                self.refresh()
+        self._run(lambda: suricata_ctl.clear_alerts(remote), done)
 
     def _render_rules(self) -> None:
         needle = self.rule_filter.text().strip().lower()

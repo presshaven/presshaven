@@ -7,33 +7,36 @@ Two live sources feed it, with no new background work of its own:
     (pushed in via apply_status(), exactly like Workloads/Global
     Visualization), aggregated per project into one health line each; and
   - the app-lifetime SecurityEventFeed (ui/security_feed.py), whose
-    `score_changed`/`event_added` signals and persisted
-    `recent_events()` history drive the current risk score and the live
-    "recent security events" list. That feed used to power nothing (its
-    own docstring referenced an Overview page that did not exist) -- this
-    page is finally its consumer.
+    `score_changed`/`event_added` signals drive the headline risk score
+    and the notable-events count cards.
+
+Below the cards is a directory of every dashboard page -- one clickable
+card each (icon, name, one-line description from core/learning.py's
+PAGE_GUIDES) -- so the landing screen doubles as a map of the whole app.
+MainWindow owns the page list, so it hands it in via set_page_directory().
 
 Pure presentation: all the counting lives in core/overview_stats.py
-(Qt-free, unit-tested). Clicking a quick-action jumps to the relevant page
-via open_page_requested, the same mechanism the Knowledge Base page uses.
+(Qt-free, unit-tested). Clicking a page card jumps there via
+open_page_requested, the same mechanism the Knowledge Base page uses.
 """
 from __future__ import annotations
 
 import time
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QRect, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton,
+    QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QVBoxLayout, QWidget,
 )
 
-from core import overview_stats, pool_view, session_view
+from core import learning, overview_stats, pool_view, session_view
 from core.colors import GREEN, GREY, ORANGE, RED
 from core.docker_ctl import target_for
-from core.pattern_log_parser import COLOR_HIGH, PatternEvent
+from core.pattern_log_parser import PatternEvent
 from core.redis_inspect import list_sessions, pool_snapshot
 from core.state import AppState
-from ui import theme
+from ui import page_icons, theme
 from ui.common import Job
 from ui.flow_layout import FlowLayout
 from ui.security_feed import SecurityEventFeed
@@ -123,6 +126,86 @@ class StatCard(QFrame):
             f"#StatCardCaption {{ color: {c['fg_muted']}; font-size: 8pt; }}")
 
 
+class PageCard(QFrame):
+    """A clickable tile linking to a dashboard page: its themed SVG icon, its
+    name and a one-line description. Emits clicked(page_id) when pressed and
+    recolors on theme change like the rest of the app."""
+
+    clicked = pyqtSignal(str)
+
+    # Every directory card is the same width; the FlowLayout tiles them and a
+    # uniform height is applied across the set once they are all built (see
+    # natural_height / OverviewPage.set_page_directory), so cards with longer
+    # descriptions don't come out taller than their neighbours.
+    WIDTH = 300
+    _MARGINS = (12, 11, 12, 11)   # left, top, right, bottom (matches row below)
+    _ICON = 26
+    _ROW_SPACING = 11
+    _TEXT_SPACING = 2
+
+    def __init__(self, page_id: str, title: str, description: str, parent=None):
+        super().__init__(parent)
+        self.page_id = page_id
+        self.setObjectName("PageCard")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedWidth(self.WIDTH)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(*self._MARGINS)
+        row.setSpacing(self._ROW_SPACING)
+        self.icon_label = QLabel()
+        self.icon_label.setFixedSize(self._ICON, self._ICON)
+        row.addWidget(self.icon_label, alignment=Qt.AlignmentFlag.AlignTop)
+        text = QVBoxLayout()
+        text.setSpacing(self._TEXT_SPACING)
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("PageCardTitle")
+        self.desc_label = QLabel(description)
+        self.desc_label.setObjectName("PageCardDesc")
+        self.desc_label.setWordWrap(True)
+        self.desc_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        # Fonts set explicitly (not only via the stylesheet) so fontMetrics are
+        # reliable for natural_height() before the widget is ever shown.
+        tf = self.title_label.font(); tf.setPointSize(10); tf.setBold(True)
+        self.title_label.setFont(tf)
+        df = self.desc_label.font(); df.setPointSize(8)
+        self.desc_label.setFont(df)
+        text.addWidget(self.title_label)
+        text.addWidget(self.desc_label)
+        text.addStretch(1)
+        row.addLayout(text, stretch=1)
+        theme.on_change(self._restyle)
+        self._restyle()
+
+    def natural_height(self) -> int:
+        """Full card height needed to show this card's title and (wrapped)
+        description at WIDTH, with no clipping. The tallest value across a set
+        of cards is applied to all of them so they end up uniform."""
+        left, top, right, bottom = self._MARGINS
+        inner = self.WIDTH - left - right - self._ICON - self._ROW_SPACING
+        title_h = self.title_label.fontMetrics().height()
+        desc_rect = self.desc_label.fontMetrics().boundingRect(
+            QRect(0, 0, inner, 100000),
+            int(Qt.TextFlag.TextWordWrap), self.desc_label.text())
+        body = max(title_h + self._TEXT_SPACING + desc_rect.height(), self._ICON)
+        return top + body + bottom
+
+    def _restyle(self) -> None:
+        c = theme.scheme_colors()
+        self.icon_label.setPixmap(page_icons.page_pixmap(self.page_id, 26))
+        self.setStyleSheet(
+            f"#PageCard {{ background: {c['surface']}; border: 1px solid {c['border']};"
+            f" border-radius: {theme.corner_radius_css(8)}; }}"
+            f"#PageCard:hover {{ border-color: {c['accent']}; background: {c['bg_alt']}; }}"
+            f"#PageCardTitle {{ color: {c['fg']}; }}"
+            f"#PageCardDesc {{ color: {c['fg_muted']}; }}")
+
+    def mouseReleaseEvent(self, event) -> None:
+        if (event.button() == Qt.MouseButton.LeftButton
+                and self.rect().contains(event.position().toPoint())):
+            self.clicked.emit(self.page_id)
+        super().mouseReleaseEvent(event)
+
+
 class OverviewPage(QWidget):
     open_page_requested = pyqtSignal(str)
     lifecycle_requested = pyqtSignal(str)   # "start" | "stop" | "restart", for both stacks
@@ -169,41 +252,25 @@ class OverviewPage(QWidget):
             stacks_row.addWidget(b)
         root.addLayout(stacks_row)
 
-        # ---- quick actions ----
-        actions = QHBoxLayout()
-        actions.setSpacing(8)
-        for label, page in [
-            ("Run an attack →", "patterns"),
-            ("Open SIEM analytics →", "kibana"),
-            ("Search logs →", "log_search"),
-            ("Inspect state store →", "redis"),
-        ]:
-            btn = QPushButton(label)
-            btn.clicked.connect(lambda _c, p=page: self.open_page_requested.emit(p))
-            actions.addWidget(btn)
-        actions.addStretch()
-        root.addLayout(actions)
-
-        # ---- recent security events ----
+        # ---- directory: a card per dashboard page ----
         header = QHBoxLayout()
-        title = QLabel("Recent security events")
+        title = QLabel("All dashboard pages")
         title.setStyleSheet("font-weight: 700; font-size: 11pt;")
         header.addWidget(title)
         header.addStretch()
-        self.events_hint = QLabel("honeypot diversions, CVE / high-severity signals")
-        self.events_hint.setStyleSheet(f"color: {GREY}; font-size: 8pt;")
-        header.addWidget(self.events_hint)
+        self.nav_hint = QLabel("every page, with what it is for — click to open")
+        self.nav_hint.setStyleSheet(f"color: {GREY}; font-size: 8pt;")
+        header.addWidget(self.nav_hint)
         root.addLayout(header)
 
-        self.events_list = QListWidget()
-        self.events_list.setWordWrap(True)
-        root.addWidget(self.events_list, stretch=1)
+        self._cards_container = QWidget()
+        self._page_cards = FlowLayout(self._cards_container, margin=0, h_spacing=10, v_spacing=10)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(self._cards_container)
+        root.addWidget(scroll, stretch=1)
 
-        # Seed from persisted history (previous sessions + this one), then
-        # subscribe to live additions.
-        for event, ts in self.feed.recent_events():
-            self._add_event_item(event, ts)
-        self._scroll_events_to_bottom()
         self._refresh_score()
         self._refresh_counts()
         self.card_diverted.set_value("—", "bring the edge stack up", GREY)
@@ -294,9 +361,31 @@ class OverviewPage(QWidget):
             str(used), f"{o.free} available · {preparing} preparing",
             ORANGE if (used or preparing) else GREEN)
 
+    def set_page_directory(self, pages: list[tuple[str, str]]) -> None:
+        """Populate the page-link cards from (page_id, label) pairs in sidebar
+        order; each card's one-line description is the page's learning-guide
+        summary. MainWindow owns the page list, so it calls this once after
+        construction."""
+        while self._page_cards.count():
+            item = self._page_cards.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        cards = []
+        for page_id, label in pages:
+            guide = learning.PAGE_GUIDES.get(page_id)
+            card = PageCard(page_id, label, guide.summary if guide else "", self._cards_container)
+            card.clicked.connect(self.open_page_requested)
+            cards.append(card)
+        # Size every card to the tallest one so the grid is uniform in both
+        # width (fixed per card) and height, regardless of description length.
+        if cards:
+            height = max(card.natural_height() for card in cards)
+            for card in cards:
+                card.setFixedHeight(height)
+                self._page_cards.addWidget(card)
+
     def _on_event_added(self, event: PatternEvent, ts: int) -> None:
-        self._add_event_item(event, ts)
-        self._scroll_events_to_bottom()
         self._refresh_counts()
         self._refresh_score()
 
@@ -330,20 +419,3 @@ class OverviewPage(QWidget):
             f"last event {_ago(counts['last_timestamp'])}",
             ORANGE if counts["window_total"] else GREY)
 
-    def _add_event_item(self, event: PatternEvent, ts: int) -> None:
-        when = time.strftime("%H:%M:%S", time.localtime(ts)) if ts else "--:--:--"
-        detail = f" — {event.detail}" if event.detail else ""
-        item = QListWidgetItem(f"{when}   {event.label}{detail}")
-        item.setForeground(_qcolor(event.color))
-        self.events_list.addItem(item)
-        # Keep the widget bounded the same way the feed caps its history.
-        while self.events_list.count() > 200:
-            self.events_list.takeItem(0)
-
-    def _scroll_events_to_bottom(self) -> None:
-        self.events_list.scrollToBottom()
-
-
-def _qcolor(hex_color: str):
-    from PyQt6.QtGui import QColor
-    return QColor(hex_color or COLOR_HIGH)

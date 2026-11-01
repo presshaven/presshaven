@@ -282,7 +282,22 @@ alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Theme Detection"; fl
 
 alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Plugin Enumeration"; flow:established,to_server; content:"wp-content/plugins/"; http_uri; content:"readme.txt"; http_uri; classtype:web-application-attack; sid:1000051; rev:1;)
 
-alert http any any -> $HOME_NET $HTTP_PORTS (msg:"Admin Panel Discovery"; flow:established,to_server; pcre:"/\/(admin|administrator|wp-admin|phpmyadmin|cpanel)/i"; classtype:web-application-attack; sid:1000052; rev:1;)
+# rev:2 -- two fixes for confirmed false positives on authenticated admin use.
+# (1) The old pcre had NO buffer modifier, so it matched the whole request,
+# not the URI. Every page a logged-in admin loads carries a
+# `Referer: https://host/wp-admin/...` header, so the rule fired on ordinary
+# navigation (and even on static-asset/admin-ajax requests whose own URL was
+# blank -- see the empty-URL alerts in the dashboard). The `/Ui` modifier now
+# scopes the match to the normalised request URI alone, anchored with `^\/`.
+# (2) `admin` on its own matched any path containing that substring (product
+# slugs, /my-account?admin=...) and `wp-admin` matched every authenticated
+# click. A genuine logged-in administrator always carries the
+# `wordpress_logged_in_<hash>` session cookie, which the reverse proxy forwards
+# to the backend, so excluding it drops all real admin navigation. What remains
+# is discovery of panels that DON'T exist on a WordPress site (administrator,
+# phpmyadmin, cpanel, adminer, a bare /admin) plus the unauthenticated bare
+# /wp-admin probe -- which is what "discovery" actually means.
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"Admin Panel Discovery"; flow:established,to_server; pcre:"/^\/(administrator|phpmyadmin|pma|cpanel|adminer|admin\/?(\?|$)|wp-admin\/?(\?|$))/Ui"; content:!"wordpress_logged_in"; http_cookie; classtype:web-application-attack; sid:1000052; rev:2;)
 
 #--------------------------------------------------------------------------
 # Suspicious File Uploads
@@ -317,9 +332,28 @@ alert http any any -> $HOME_NET $HTTP_PORTS (msg:"Script File Upload Attempt"; f
 # src and fire this DoS alert. They carry a dedicated User-Agent
 # (health_check.lua's HEALTHCHECK_USER_AGENT) that real client traffic never
 # has, so matching it here drops only the probes -- the checks keep running.
-alert http any any -> $HOME_NET $HTTP_PORTS (msg:"High Rate HTTP Requests"; flow:established,to_server; pcre:!"/\.(css|js|jpe?g|png|gif|svg|webp|webm|mp4|mp3|pdf|woff2?|ttf|eot|otf|ico)(\?.*)?$/Ui"; content:!"honeypot-internal-healthprobe"; http_user_agent; detection_filter:track by_src, count 50, seconds 60; classtype:attempted-dos; sid:1000056; rev:3;)
+# rev:4 -- also excludes the WordPress AJAX/cron endpoints. Because Suricata
+# sees proxy->backend traffic (network_mode:host), every client shares the
+# reverse_proxy's single source IP, so `track by_src` sums ALL visitors
+# together. admin-ajax.php (the Heartbeat API polls it every 15-60s per open
+# admin/editor tab, plus cart/autosave AJAX) and wp-cron.php are the two
+# endpoints that legitimately fire at a steady background rate, so aggregated
+# across every session they crossed 50 req/60s and false-fired this DoS alert
+# with no attacker present (confirmed live: an admin-ajax.php "High Rate HTTP
+# Requests" alert while merely logged in). Excluding them leaves the rule
+# watching genuine high-rate page/endpoint flooding, which is the DoS signal.
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"High Rate HTTP Requests"; flow:established,to_server; pcre:!"/\.(css|js|jpe?g|png|gif|svg|webp|webm|mp4|mp3|pdf|woff2?|ttf|eot|otf|ico)(\?.*)?$/Ui"; content:!"admin-ajax.php"; http_uri; content:!"wp-cron.php"; http_uri; content:!"honeypot-internal-healthprobe"; http_user_agent; detection_filter:track by_src, count 50, seconds 60; classtype:attempted-dos; sid:1000056; rev:4;)
 
-alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Login Brute Force"; flow:established,to_server; content:"wp-login.php"; http_uri; detection_filter:track by_src, count 10, seconds 60; classtype:web-application-attack; sid:1000057; rev:1;)
+# rev:2 -- now requires POST, so merely VIEWING the login page never counts.
+# The old rule counted any request whose URI held "wp-login.php", GET included.
+# Since all traffic shares the reverse_proxy source IP (network_mode:host),
+# `track by_src` aggregates everyone, so ordinary visitors each opening the
+# login page once summed past 10/60s and false-fired "brute force" with no
+# password attempt made at all. A brute-force attack is repeated credential
+# SUBMISSION, i.e. POST /wp-login.php -- counting only those (and never the
+# internal health probe) keeps the attack signal while page views stop
+# triggering it. (sid:1000017 remains the stricter log=/pwd= body check.)
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Login Brute Force"; flow:established,to_server; content:"POST"; http_method; content:"wp-login.php"; http_uri; content:!"honeypot-internal-healthprobe"; http_user_agent; detection_filter:track by_src, count 10, seconds 60; classtype:web-application-attack; sid:1000057; rev:2;)
 
 #--------------------------------------------------------------------------
 # Honeypot Specific Rules
@@ -352,7 +386,18 @@ alert http any any -> $HOME_NET $HTTP_PORTS (msg:"Honeypot Trigger - Automated T
 # dedicated User-Agent (health_check.lua's HEALTHCHECK_USER_AGENT) real
 # clients never send, so excluding it drops only the probe, not genuine
 # wp-admin/wp-login/xmlrpc scanning by an actual visitor.
-alert http any any -> $HOME_NET $HTTP_PORTS (msg:"Honeypot Trigger - Rapid Vulnerability Scanning"; flow:established,to_server; pcre:"/\/(wp-admin|wp-login|wp-config|xmlrpc\.php)/i"; content:!"honeypot-internal-healthprobe"; http_user_agent; detection_filter:track by_src, count 5, seconds 60; classtype:web-application-attack; priority:1; sid:1000060; rev:2;)
+# rev:3 -- the UA exclusion alone did not stop the false positives the health
+# probe comment below describes, because the old pcre had no buffer modifier:
+# it matched the whole request, so a logged-in admin's `Referer:
+# .../wp-admin/...` header on EVERY subsequent request (and on every static
+# asset and admin-ajax call the admin UI loads) counted toward the 5/60s
+# threshold, even when the request's own URI never touched wp-admin. Three
+# fixes: (1) `/Ui` scopes the match to the request URI only, so Referer/cookie
+# text no longer counts; (2) a negative asset pcre drops the admin UI's own
+# css/js/font loads; (3) excluding the `wordpress_logged_in` session cookie
+# drops authenticated navigation outright -- an administrator working in
+# wp-admin is not "scanning" it. The health-probe UA exclusion is retained.
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"Honeypot Trigger - Rapid Vulnerability Scanning"; flow:established,to_server; pcre:"/\/(wp-admin|wp-login|wp-config|xmlrpc\.php)/Ui"; pcre:!"/\.(css|js|jpe?g|png|gif|svg|webp|woff2?|ttf|eot|otf|ico|map)(\?.*)?$/Ui"; content:!"wordpress_logged_in"; http_cookie; content:!"honeypot-internal-healthprobe"; http_user_agent; detection_filter:track by_src, count 5, seconds 60; classtype:web-application-attack; priority:1; sid:1000060; rev:3;)
 
 #--------------------------------------------------------------------------
 # Session Management Integration Rules

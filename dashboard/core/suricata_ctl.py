@@ -170,6 +170,49 @@ def fetch_alerts(remote: RemoteConfig | None, limit: int = 500) -> list[Suricata
     return parse_alerts(out)
 
 
+def clear_alerts(remote: RemoteConfig | None) -> None:
+    """Empty the eve.json alert log so the Alerts tab starts fresh.
+
+    Truncates the file in place (`: > eve.json`) rather than deleting it:
+    Suricata holds eve.json open in append mode, so truncation makes its next
+    write land at offset 0 of the same file, whereas `rm` would unlink the
+    inode Suricata keeps writing to -- the log would look empty in the UI while
+    Suricata silently logged to a now-nameless file until its next restart."""
+    _exec(remote, "sh", "-c", f": > {EVE_PATH}")
+
+
+def container_ip_map(remote: RemoteConfig | None, timeout: float = 15.0) -> dict[str, str]:
+    """Best-effort map of container IP -> container name for every running
+    container on the target host, so the Alerts tab can name the container an
+    alert's source/target IP belongs to.
+
+    Suricata runs with network_mode:host and logs the raw Docker bridge IPs it
+    sees (e.g. 172.20.0.7), which are meaningless on their own; `docker inspect`
+    turns them back into container names. This spans ALL running containers, not
+    just the edge compose project, so production, the honeypot pools and the
+    reverse proxy all resolve. Runs `docker` directly (not compose) via
+    build_shell so it works locally and over SSH. Returns {} on any failure --
+    the IPs still show unannotated, so enrichment never breaks the Alerts view."""
+    argv, cwd = Target(project="edge", remote=remote).build_shell(
+        "docker ps -q | xargs -r docker inspect "
+        "--format '{{$n := .Name}}{{range .NetworkSettings.Networks}}"
+        "{{.IPAddress}} {{$n}}{{println}}{{end}}'")
+    try:
+        out = run_checked(argv, error=SuricataError, cwd=cwd, timeout=timeout,
+                          what="docker inspect").stdout
+    except SuricataError:
+        return {}
+    mapping: dict[str, str] = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        ip, name = parts[0], parts[1].lstrip("/")
+        if ip and name:
+            mapping[ip] = name
+    return mapping
+
+
 def fetch_rules_text(remote: RemoteConfig | None) -> str:
     return _exec(remote, "cat", RULES_PATH)
 

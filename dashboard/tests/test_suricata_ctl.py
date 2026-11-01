@@ -5,6 +5,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 DASH = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DASH))
@@ -87,6 +88,37 @@ class RuleTests(unittest.TestCase):
         rules = sc.parse_rules(path.read_text())
         self.assertGreater(len(rules), 10)
         self.assertEqual(len({r.sid for r in rules}), len(rules))
+
+
+class ContainerIpMapTests(unittest.TestCase):
+    def test_parses_inspect_output_and_strips_slash(self):
+        out = ("172.20.0.7 /reverse_proxy\n"
+               "172.21.0.9 /reverse_proxy\n"      # same container, second network
+               "172.20.0.2 /production_eshop\n"
+               "   \n" "garbage-with-no-space\n")  # noise lines ignored
+        with mock.patch("core.suricata_ctl.run_checked") as rc:
+            rc.return_value = type("R", (), {"stdout": out})()
+            m = sc.container_ip_map(None)
+        self.assertEqual(m["172.20.0.7"], "reverse_proxy")
+        self.assertEqual(m["172.21.0.9"], "reverse_proxy")
+        self.assertEqual(m["172.20.0.2"], "production_eshop")
+        self.assertNotIn("garbage-with-no-space", m)
+
+    def test_returns_empty_on_failure(self):
+        with mock.patch("core.suricata_ctl.run_checked", side_effect=sc.SuricataError("no docker")):
+            self.assertEqual(sc.container_ip_map(None), {})
+
+
+class ClearAlertsTests(unittest.TestCase):
+    def test_truncates_eve_in_place(self):
+        with mock.patch.object(sc, "_exec", return_value="") as ex:
+            sc.clear_alerts(None)
+        ex.assert_called_once()
+        args = ex.call_args.args
+        # sh -c ": > <eve path>" -- truncation, never rm (keeps Suricata's fd).
+        self.assertEqual(args[1:3], ("sh", "-c"))
+        self.assertEqual(args[3], f": > {sc.EVE_PATH}")
+        self.assertNotIn("rm", args[3])
 
 
 if __name__ == "__main__":

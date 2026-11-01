@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated": "2026-10-31",
+  "generated": "2026-11-01",
   "source_files": [
     "ids/reverse_proxy_enhanced/lua/pattern_rules.lua",
     "ids/reverse_proxy_enhanced/lua/init.lua",
@@ -2380,7 +2380,7 @@
         },
         {
           "sid": 1000057,
-          "rev": 1,
+          "rev": 2,
           "message": "WordPress Login Brute Force",
           "classtype": "web-application-attack"
         }
@@ -4318,7 +4318,7 @@
       "signatures": [
         {
           "layer": "suricata",
-          "match": "alert http any any -> $HOME_NET $HTTP_PORTS (msg:\"Honeypot Trigger - Rapid Vulnerability Scanning\"; flow:established,to_server; pcre:\"/\\/(wp-admin|wp-login|wp-config|xmlrpc\\.php)/i\"; content:!\"honeypot-internal-healthprobe\"; http_user_agent; detection_filter:track by_src, count 5, seconds 60; classtype:web-application-attack; priority:1; sid:1000060; rev:2;)",
+          "match": "alert http any any -> $HOME_NET $HTTP_PORTS (msg:\"Honeypot Trigger - Rapid Vulnerability Scanning\"; flow:established,to_server; pcre:\"/\\/(wp-admin|wp-login|wp-config|xmlrpc\\.php)/Ui\"; pcre:!\"/\\.(css|js|jpe?g|png|gif|svg|webp|woff2?|ttf|eot|otf|ico|map)(\\?.*)?$/Ui\"; content:!\"wordpress_logged_in\"; http_cookie; content:!\"honeypot-internal-healthprobe\"; http_user_agent; detection_filter:track by_src, count 5, seconds 60; classtype:web-application-attack; priority:1; sid:1000060; rev:3;)",
           "kind": "suricata",
           "sid": 1000060
         }
@@ -4326,7 +4326,7 @@
       "suricata": [
         {
           "sid": 1000060,
-          "rev": 2,
+          "rev": 3,
           "message": "Honeypot Trigger - Rapid Vulnerability Scanning",
           "classtype": "web-application-attack"
         }
@@ -5867,7 +5867,7 @@
       "signatures": [
         {
           "layer": "suricata",
-          "match": "alert http any any -> $HOME_NET $HTTP_PORTS (msg:\"High Rate HTTP Requests\"; flow:established,to_server; pcre:!\"/\\.(css|js|jpe?g|png|gif|svg|webp|webm|mp4|mp3|pdf|woff2?|ttf|eot|otf|ico)(\\?.*)?$/Ui\"; content:!\"honeypot-internal-healthprobe\"; http_user_agent; detection_filter:track by_src, count 50, seconds 60; classtype:attempted-dos; sid:1000056; rev:3;)",
+          "match": "alert http any any -> $HOME_NET $HTTP_PORTS (msg:\"High Rate HTTP Requests\"; flow:established,to_server; pcre:!\"/\\.(css|js|jpe?g|png|gif|svg|webp|webm|mp4|mp3|pdf|woff2?|ttf|eot|otf|ico)(\\?.*)?$/Ui\"; content:!\"admin-ajax.php\"; http_uri; content:!\"wp-cron.php\"; http_uri; content:!\"honeypot-internal-healthprobe\"; http_user_agent; detection_filter:track by_src, count 50, seconds 60; classtype:attempted-dos; sid:1000056; rev:4;)",
           "kind": "suricata",
           "sid": 1000056
         }
@@ -5875,7 +5875,7 @@
       "suricata": [
         {
           "sid": 1000056,
-          "rev": 3,
+          "rev": 4,
           "message": "High Rate HTTP Requests",
           "classtype": "attempted-dos"
         }
@@ -14056,7 +14056,7 @@
       "suricata": [
         {
           "sid": 1000052,
-          "rev": 1,
+          "rev": 2,
           "message": "Admin Panel Discovery",
           "classtype": "web-application-attack"
         }
