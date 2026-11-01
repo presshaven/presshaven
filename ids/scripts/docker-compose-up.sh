@@ -33,6 +33,13 @@ fi
 # to include it. docker-purge.sh/docker-compose-down.sh, by contrast, DO
 # use --profile '*' -- tearing down must always cover everything that
 # might be running, regardless of which profile started it.
+# Remove host iptables rules orphaned by a previous teardown before starting.
+# Docker does not reliably drop its raw-table anti-spoof rules when a network
+# is removed; the leftover `! -i <dead-bridge>` DROP then blackholes the reused
+# container IP on this `up` (e.g. production_db_seed can't reach
+# production_database). Non-fatal -- see scripts/prune_orphan_iptables.sh.
+sh "$SCRIPT_DIR/prune_orphan_iptables.sh" || true
+
 echo "Starting services with docker compose..."
 docker compose up --build
 

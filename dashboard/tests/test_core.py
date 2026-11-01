@@ -6,10 +6,12 @@ Stdlib unittest only, so they run without the app's PyQt6 venv:
 """
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 DASHBOARD_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = DASHBOARD_DIR.parent
@@ -266,6 +268,41 @@ class PurgeTests(unittest.TestCase):
         argv, _ = Target(project="siem").build_purge()
         self.assertEqual(argv[:2], ["docker", "compose"])
         self.assertEqual(argv[-3:], ["down", "-v", "--remove-orphans"])
+
+
+class PruneOrphanRulesTests(unittest.TestCase):
+    """Target.prune_orphan_rules() is the deploy hook that clears host iptables
+    rules Docker orphaned on a previous teardown: a `! -i <dead-bridge>` DROP
+    matches every packet, so it blackholes the reused container IP and
+    production_db_seed could never reach production_database. It runs the host
+    script locally and is a no-op for a remote target."""
+
+    def test_remote_target_is_a_noop(self):
+        from core.docker_ctl import Target
+        from core.state import RemoteConfig
+        with mock.patch.object(subprocess, "run") as run:
+            out = Target(project="edge",
+                         remote=RemoteConfig(host="host.example")).prune_orphan_rules()
+        self.assertEqual(out, "")
+        run.assert_not_called()
+
+    def test_local_target_runs_the_prune_script(self):
+        from core import paths
+        from core.docker_ctl import Target
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="[prune-iptables] done\n", stderr="")
+        with mock.patch.object(subprocess, "run", return_value=completed) as run:
+            out = Target(project="edge").prune_orphan_rules()
+        self.assertIn("[prune-iptables] done", out)
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[0], "sh")
+        self.assertEqual(argv[1], str(paths.EDGE_DIR / "scripts" / "prune_orphan_iptables.sh"))
+
+    def test_failure_is_non_fatal(self):
+        from core.docker_ctl import Target
+        with mock.patch.object(subprocess, "run", side_effect=OSError("boom")):
+            out = Target(project="edge").prune_orphan_rules()
+        self.assertIn("skipped", out)
 
 
 class RuntimePoolRecordTests(unittest.TestCase):

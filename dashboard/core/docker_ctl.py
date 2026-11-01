@@ -299,6 +299,29 @@ class Target:
         # One brace group, so a failed `cd` (remote) skips all of it.
         return self.build_shell(f"{{ {pools}{compose} {down} && {compose} {up}; }}")
 
+    def prune_orphan_rules(self, timeout: float = 20.0) -> str:
+        """Drop host iptables rules orphaned by a previous teardown, just
+        before a local `up`/redeploy. Docker does not reliably remove its
+        raw-table anti-spoof DROP rules when a network goes away; the leftover
+        `! -i <dead-bridge>` match then blackholes the reused container IP on
+        the next `up` (production_db_seed could not reach production_database
+        and timed out). The rules live in the host's own netns, so this is a
+        no-op for a remote target. Never raises -- returns the script's output
+        (or a short note) for the caller to echo into the deploy log. See
+        ids/scripts/prune_orphan_iptables.sh."""
+        if self.is_remote:
+            return ""
+        from core import paths  # local import: paths pulls in nothing from here
+        script = paths.EDGE_DIR / "scripts" / "prune_orphan_iptables.sh"
+        try:
+            result = subprocess.run(
+                ["sh", str(script)],
+                capture_output=True, text=True, timeout=timeout,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return f"[prune-iptables] skipped ({exc})\n"
+        return result.stdout + result.stderr
+
     # ---- one-shot synchronous helpers (call from a background thread) ----
 
     def ps(self, timeout: float = 15.0) -> list[dict]:

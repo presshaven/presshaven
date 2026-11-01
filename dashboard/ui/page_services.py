@@ -145,6 +145,15 @@ class TargetPanel(QGroupBox):
         # last time this same tail started (see ErrorLogMonitor.reset()).
         if compose_args and compose_args[0] == "logs" and self._error_monitor is not None:
             self._error_monitor.reset(self.target.key)
+        # Deploy hook: before bringing the stack up, prune host iptables rules
+        # orphaned by a previous teardown (a dead-bridge `! -i` DROP left by
+        # Docker blackholes the reused container IP -- production_db_seed could
+        # not reach production_database). Local + non-fatal; see
+        # Target.prune_orphan_rules() / scripts/prune_orphan_iptables.sh.
+        if compose_args[:1] == ("up",):
+            out = self.target.prune_orphan_rules()
+            if out:
+                self.log_panel.append(out)
         argv, cwd = self.target.build(*compose_args)
         self.log_panel.run(argv, cwd)
 
@@ -265,6 +274,11 @@ class TargetPanel(QGroupBox):
             self._mutating_action = True
             # Ends in `up`, so the finished jobs get cleaned up as after Start.
             self._last_mutating_args = ("up",)
+            # Same orphaned-iptables prune as Start (see _run()): redeploy does
+            # its own down+up, so the dead-bridge DROPs must go first here too.
+            out = self.target.prune_orphan_rules()
+            if out:
+                self.log_panel.append(out)
             argv, cwd = self.target.build_redeploy()
             self.log_panel.run(argv, cwd)
 

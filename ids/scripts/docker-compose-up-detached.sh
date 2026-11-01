@@ -26,6 +26,10 @@ fi
 # Deliberately plain `docker compose up -d`, no --profile -- see
 # docker-compose-up.sh's comment: vector (profiles: [elk]) is meant to
 # stay opt-in, not force-started here.
+# Remove host iptables rules orphaned by a previous teardown before starting
+# (see scripts/prune_orphan_iptables.sh and docker-compose-up.sh). Non-fatal.
+sh "$SCRIPT_DIR/prune_orphan_iptables.sh" || true
+
 echo "Starting services with docker compose in background..."
 docker compose up -d --build
 
