@@ -196,6 +196,50 @@ function _M.is_studio_passthrough(configured_secret, header_secret, header_backe
 end
 
 -- ---------------------------------------------------------------------------
+-- studio_honeypot_target(configured_secret, header_secret, header_backend, header_pool, max_pool)
+--
+-- The dashboard "Targeted Access" page's counterpart to is_studio_passthrough:
+-- the same secret-gated passthrough, but for jumping straight into ONE
+-- honeypot pool's wp-admin (X-Studio-Backend: honeypot + X-Studio-Pool: <N>)
+-- instead of production, so an operator can confirm what a specific pool is
+-- actually serving -- e.g. that a WordPress Studio propagation landed --
+-- without scoring/session routing ever diverting or mis-targeting the check.
+--
+-- Fail-closed exactly like is_studio_passthrough: a wrong/missing secret, a
+-- backend header that isn't "honeypot", or a pool number that doesn't parse
+-- as a positive integer within 1..max_pool all return nil. max_pool is the
+-- number of statically-declared nginx `upstream honeypot_backend_N` blocks
+-- (see pool_router_rules.STATIC_POOL_COUNT) -- a pool created later at
+-- runtime has no static upstream a single request can be force-routed to.
+--
+-- @param configured_secret string|nil  _G.config.internal_test_secret
+-- @param header_secret      string|nil  X-Internal-Test-Auth request header
+-- @param header_backend     string|nil  X-Studio-Backend request header
+-- @param header_pool        string|nil  X-Studio-Pool request header
+-- @param max_pool           number|nil  pool_router_rules.STATIC_POOL_COUNT
+-- @return string|nil  "honeypot_backend_<N>" upstream name, or nil
+-- ---------------------------------------------------------------------------
+function _M.studio_honeypot_target(configured_secret, header_secret, header_backend, header_pool, max_pool)
+    if not configured_secret or configured_secret == "" then
+        return nil
+    end
+    if header_secret ~= configured_secret then
+        return nil
+    end
+    if header_backend ~= "honeypot" then
+        return nil
+    end
+    local pool_num = tonumber(header_pool)
+    if not pool_num or pool_num ~= math.floor(pool_num) or pool_num < 1 then
+        return nil
+    end
+    if not max_pool or pool_num > max_pool then
+        return nil
+    end
+    return "honeypot_backend_" .. pool_num
+end
+
+-- ---------------------------------------------------------------------------
 -- is_rapid_automation(session_data, pattern_result, current_time)
 --
 -- @param session_data  table|nil

@@ -128,6 +128,25 @@ class AdminLoginTests(unittest.TestCase):
             {"WP_ADMIN_USER": "admin", "HONEYPOT_WP_ADMIN_PASSWORD": "decoy"}))
 
 
+class HoneypotAdminLoginTests(unittest.TestCase):
+    def test_reads_shared_user_and_honeypot_password(self):
+        login = wp_studio.honeypot_admin_login(
+            {"WP_ADMIN_USER": " admin ", "WP_ADMIN_PASSWORD": "real",
+             "HONEYPOT_WP_ADMIN_PASSWORD": "decoy"})
+        self.assertEqual(login, wp_studio.AdminLogin("admin", "decoy"))
+
+    def test_missing_either_value_disables_autologin(self):
+        self.assertIsNone(wp_studio.honeypot_admin_login({"WP_ADMIN_USER": "admin"}))
+        self.assertIsNone(wp_studio.honeypot_admin_login({"HONEYPOT_WP_ADMIN_PASSWORD": "decoy"}))
+        self.assertIsNone(wp_studio.honeypot_admin_login({}))
+
+    def test_never_uses_the_production_password(self):
+        login = wp_studio.honeypot_admin_login(
+            {"WP_ADMIN_USER": "admin", "WP_ADMIN_PASSWORD": "real",
+             "HONEYPOT_WP_ADMIN_PASSWORD": "decoy"})
+        self.assertNotEqual(login.password, "real")
+
+
 class IsLoginFormTests(unittest.TestCase):
     HOME = "https://shop.example/wp-admin/"
 

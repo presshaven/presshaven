@@ -39,6 +39,7 @@ from ui.page_backups import BackupsPage
 from ui.page_certs import CertsPage
 from ui.page_patterns import PatternsPage
 from ui.page_wp_studio import WpStudioPage
+from ui.page_targeted_access import TargetedAccessPage
 from ui.page_wp_update import WpUpdatePage
 from ui.page_pattern_database import PatternDatabasePage
 from ui.page_signature_sim import SignatureSimPage
@@ -86,7 +87,7 @@ _NOTIFY_ON_STATUSES = {"unhealthy", "exited_bad"}
 
 PAGES = [
     "overview", "live_events", "pipeline", "sessions", "suricata", "detection", "whitelist", "honeypot_targets", "container_firewall", "pool_scaling", "services", "health", "resources", "certificates", "redis", "backups",
-    "kibana", "patterns", "pattern_database", "signature_sim", "pool_test", "breach_audit", "log_search", "extras", "wp_studio", "wp_update", "settings", "learn",
+    "kibana", "patterns", "pattern_database", "signature_sim", "pool_test", "breach_audit", "log_search", "extras", "wp_studio", "wp_update", "targeted_access", "settings", "learn",
 ]
 PAGE_LABELS = {
     "overview": "Overview",
@@ -115,6 +116,7 @@ PAGE_LABELS = {
     "extras": "Reporting",
     "wp_studio": "WordPress Studio",
     "wp_update": "WordPress Update",
+    "targeted_access": "Targeted Access",
     "settings": "Connectors & Config",
     "learn": "Knowledge Base",
 }
@@ -131,7 +133,7 @@ NAV_GROUPS = [
     ("Overview", ["overview"]),
     ("Monitor", ["live_events", "health", "kibana", "pipeline", "resources", "log_search"]),
     ("Threat Operations", ["patterns", "sessions", "suricata", "detection", "honeypot_targets", "whitelist", "container_firewall", "pattern_database", "signature_sim", "pool_scaling", "pool_test", "breach_audit", "redis"]),
-    ("Manage", ["services", "wp_studio", "wp_update", "settings", "certificates", "backups"]),
+    ("Manage", ["services", "wp_studio", "wp_update", "targeted_access", "settings", "certificates", "backups"]),
     ("Reporting", ["learn", "extras"]),
 ]
 
@@ -140,15 +142,16 @@ NAV_GROUPS = [
 # View menu, Ctrl+K palette and the group menu, so this is purely about
 # keeping the rail focused on the most useful, informative pages:
 # the sidebar shows the live monitoring surfaces (Live Events, Global
-# Visualization, SIEM Analytics), the core threat-ops pages, workload/config
-# control and the Knowledge Base; diagnostics (Log Pipeline, Workload
-# Telemetry, Forensics), reference/validation tooling and one-off exports
-# (Reporting) move into overflow.
+# Visualization, SIEM Analytics), the core threat-ops pages and
+# workload/config control; diagnostics (Log Pipeline, Workload Telemetry,
+# Forensics), reference/validation tooling, and the Reporting group's
+# teaching material and one-off exports (Knowledge Base, Implementation
+# export) are not needed day to day, so they move into overflow.
 NAV_OVERFLOW = {
     "Monitor": ["pipeline", "resources", "log_search"],
     "Threat Operations": ["pattern_database", "signature_sim", "pool_scaling", "pool_test", "breach_audit", "redis"],
     "Manage": ["certificates", "backups"],
-    "Reporting": ["extras"],
+    "Reporting": ["learn", "extras"],
 }
 
 NAV_ORDER = [page_id for _group, ids in NAV_GROUPS for page_id in ids]
@@ -350,6 +353,7 @@ class MainWindow(QMainWindow):
         self.extras_page.open_page_requested.connect(self._open_page)
         self.wp_studio_page = WpStudioPage(state)
         self.wp_update_page = WpUpdatePage(state)
+        self.targeted_access_page = TargetedAccessPage(state)
         self.settings_page = SettingsPage(state, self._on_remote_settings_changed, self.set_poll_interval,
                                       on_test_alert=self._test_alert,
                                       edge_running=self.services_page._edge_running,
@@ -384,6 +388,7 @@ class MainWindow(QMainWindow):
             ("extras", self.extras_page),
             ("wp_studio", self.wp_studio_page),
             ("wp_update", self.wp_update_page),
+            ("targeted_access", self.targeted_access_page),
             ("settings", self.settings_page),
             ("learn", self.learn_page),
         ]:

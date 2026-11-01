@@ -169,6 +169,13 @@ class BrowserWidget(QWidget):
     def reload_home(self) -> None:
         self.navigate(self._home_url)
 
+    def set_home_url(self, url: str) -> None:
+        """Change what the "⌂" button / reload_home() returns to -- used by
+        pages that re-point one browser at a different backend (e.g.
+        Targeted Access switching between production and a honeypot pool)
+        instead of creating a fresh widget per target."""
+        self._home_url = url
+
     def clear_cookies(self) -> None:
         self.profile.cookieStore().deleteAllCookies()
 

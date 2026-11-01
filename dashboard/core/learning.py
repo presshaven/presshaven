@@ -498,6 +498,14 @@ PAGE_GUIDES: dict[str, PageGuide] = {
         "are re-synced to the pools, and each database is migrated. The maintenance flag is TTL-guarded in Redis, so the site comes back on its own "
         "even if the update is interrupted -- and keeping the decoys on the same version as production keeps their fingerprints believable.",
     ),
+    "targeted_access": PageGuide(
+        "Open the real wp-admin panel on production or on any one honeypot pool, on demand.",
+        "Propagate a change in WordPress Studio, then open the same pool here and confirm it landed.",
+        "Pinned the same way WordPress Studio pins to production: the chosen target is forced "
+        "with a secret-gated header, so scoring and session routing are skipped entirely -- the "
+        "check can't be diverted off its target, and it never poisons the operator's own IP "
+        "reputation, whichever pool is opened.",
+    ),
     "settings": PageGuide(
         "Target connectors (local or SSH), stack configuration, detection policy values and console preferences.",
         "Open the edge .env and find SCORE_DECAY_HALF_LIFE_SECONDS and THREAT_DECAY_ENABLED.",

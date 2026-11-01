@@ -115,6 +115,19 @@ def admin_login(env) -> AdminLogin | None:
     return AdminLogin(user, password)
 
 
+def honeypot_admin_login(env) -> AdminLogin | None:
+    """The honeypot pools' WordPress admin account: WP_ADMIN_USER (shared
+    with production) + HONEYPOT_WP_ADMIN_PASSWORD, which is deliberately
+    different from production's (see docker-compose.yml). Used by the
+    Targeted Access page when signing into a honeypot pool -- never returns
+    production's password."""
+    user = (env.get("WP_ADMIN_USER", "") or "").strip()
+    password = env.get("HONEYPOT_WP_ADMIN_PASSWORD", "") or ""
+    if not user or not password:
+        return None
+    return AdminLogin(user, password)
+
+
 # wp-login.php actions that show the sign-in form. Everything else (logout,
 # lostpassword, rp, register, confirmaction, ...) is left alone.
 _LOGIN_ACTIONS = {"", "login"}

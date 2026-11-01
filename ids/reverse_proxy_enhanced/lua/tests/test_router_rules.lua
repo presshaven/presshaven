@@ -228,5 +228,38 @@ do
           rules.is_studio_passthrough(S, S, nil) == false)
 end
 
+print("== studio_honeypot_target() ==")
+do
+    local S = "sekret-value"
+    check("secret presented + honeypot backend + in-range pool -> upstream",
+          rules.studio_honeypot_target(S, S, "honeypot", "2", 3) == "honeypot_backend_2")
+    check("pool 1 of 3 -> honeypot_backend_1",
+          rules.studio_honeypot_target(S, S, "honeypot", "1", 3) == "honeypot_backend_1")
+    check("wrong presented secret -> nil",
+          rules.studio_honeypot_target(S, "nope", "honeypot", "2", 3) == nil)
+    check("no configured secret (fail-closed) -> nil",
+          rules.studio_honeypot_target(nil, S, "honeypot", "2", 3) == nil)
+    check("empty configured secret (fail-closed) -> nil",
+          rules.studio_honeypot_target("", "", "honeypot", "2", 3) == nil)
+    check("backend is production, not honeypot -> nil",
+          rules.studio_honeypot_target(S, S, "production", "2", 3) == nil)
+    check("missing backend header -> nil",
+          rules.studio_honeypot_target(S, S, nil, "2", 3) == nil)
+    check("pool number above max_pool -> nil",
+          rules.studio_honeypot_target(S, S, "honeypot", "4", 3) == nil)
+    check("pool number zero -> nil",
+          rules.studio_honeypot_target(S, S, "honeypot", "0", 3) == nil)
+    check("negative pool number -> nil",
+          rules.studio_honeypot_target(S, S, "honeypot", "-1", 3) == nil)
+    check("non-numeric pool -> nil",
+          rules.studio_honeypot_target(S, S, "honeypot", "abc", 3) == nil)
+    check("non-integer pool -> nil",
+          rules.studio_honeypot_target(S, S, "honeypot", "2.5", 3) == nil)
+    check("missing pool header -> nil",
+          rules.studio_honeypot_target(S, S, "honeypot", nil, 3) == nil)
+    check("missing max_pool -> nil",
+          rules.studio_honeypot_target(S, S, "honeypot", "2", nil) == nil)
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)
