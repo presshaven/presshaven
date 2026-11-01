@@ -278,6 +278,7 @@ class ProductionHardeningTests(unittest.TestCase):
              mock.patch.object(ba, "_prod_container",
                                return_value="proj-production_eshop-1"), \
              mock.patch.object(ba, "_docker_exec", return_value=(0, "BLOCKED")), \
+             mock.patch.object(ba, "_internet_egress_allowed", return_value=False), \
              mock.patch.object(ba, "discover_pools", return_value={}), \
              mock.patch.object(ba, "_edge_request", side_effect=fake_req):
             return ba.run_production_hardening(
@@ -342,13 +343,21 @@ class ProductionHardeningTests(unittest.TestCase):
                          and "production shop present" in r.probe])
 
     def test_egress_open_docker_daemon_is_fail(self):
-        dests = ba._production_egress_destinations([])
+        dests = ba._production_egress_destinations([], internet_allowed=False)
         daemon = [d for d in dests if "Docker daemon" in d.label]
         self.assertTrue(daemon)
         self.assertTrue(all(d.open_outcome == ba.FAIL for d in daemon))
 
-    def test_egress_open_internet_is_warn(self):
-        dests = ba._production_egress_destinations([])
+    def test_egress_open_internet_is_fail_by_default(self):
+        # Default-deny: an open internet means the firewall is not enforcing.
+        dests = ba._production_egress_destinations([], internet_allowed=False)
+        inet = [d for d in dests if "internet" in d.label.lower()]
+        self.assertTrue(inet)
+        self.assertTrue(all(d.open_outcome == ba.FAIL for d in inet))
+
+    def test_egress_open_internet_is_warn_when_bypass_on(self):
+        # Temporary install bypass on: an open internet is expected -> WARN.
+        dests = ba._production_egress_destinations([], internet_allowed=True)
         inet = [d for d in dests if "internet" in d.label.lower()]
         self.assertTrue(inet)
         self.assertTrue(all(d.open_outcome == ba.WARN for d in inet))

@@ -249,6 +249,67 @@ function load_default(): array {
 	if ( validate( $doc, profile() ) ) {
 		fail( "the image default ruleset $file is invalid" );
 	}
+	if ( profile() === 'production' ) {
+		$doc = production_egress_overlay( $doc );
+	}
+	return $doc;
+}
+
+/** Interpret an .env flag the way compose / the dashboard do. */
+function env_truthy( string $name ): bool {
+	$v = strtolower( trim( (string) getenv( $name ) ) );
+	return in_array( $v, [ '1', 'true', 'yes', 'on' ], true );
+}
+
+/** Split PRODUCTION_TRUSTED_EGRESS_DOMAINS into clean, de-duplicated domains. */
+function trusted_egress_domains(): array {
+	$out = [];
+	foreach ( preg_split( '/[\s,]+/', (string) getenv( 'PRODUCTION_TRUSTED_EGRESS_DOMAINS' ) ) as $d ) {
+		$d = rtrim( strtolower( trim( $d ) ), '.' );
+		if ( $d !== '' && preg_match( '/^[a-z0-9][a-z0-9.-]{0,62}$/', $d ) && strpos( $d, '.' ) !== false
+				&& ! in_array( $d, $out, true ) ) {
+			$out[] = $d;
+		}
+		if ( count( $out ) >= 20 ) {
+			break;  // a sane ceiling; the rest of MAX_RULES stays for operators
+		}
+	}
+	return $out;
+}
+
+/** Seed production's internet egress from .env on a fresh deploy (no saved
+ * ruleset yet): the broad-internet TEMPORARY bypass toggle
+ * (PRODUCTION_INTERNET_EGRESS) and the persistent per-domain allow-list
+ * (PRODUCTION_TRUSTED_EGRESS_DOMAINS, outbound HTTPS to each named host). The
+ * dashboard's Studio page is what flips these on the fly after deploy; this
+ * only decides the starting point so the allow-list survives `down -v`. */
+function production_egress_overlay( array $doc ): array {
+	$allow_internet = env_truthy( 'PRODUCTION_INTERNET_EGRESS' );
+	foreach ( $doc['outbound'] as &$r ) {
+		if ( $r['id'] === 'internet-https' ) {
+			$r['enabled'] = $allow_internet;
+		}
+	}
+	unset( $r );
+	$seen = [];
+	foreach ( $doc['outbound'] as $r ) {
+		$seen[ $r['id'] ] = true;
+	}
+	foreach ( trusted_egress_domains() as $d ) {
+		$id = substr( 'trusted-' . preg_replace( '/[^a-z0-9-]/', '-', $d ), 0, 48 );
+		if ( isset( $seen[ $id ] ) ) {
+			continue;  // two domains slugified to the same id, or already present
+		}
+		$seen[ $id ] = true;
+		$doc['outbound'][] = [
+			'id' => $id,
+			'enabled' => true,
+			'peer' => $d,
+			'proto' => 'tcp',
+			'ports' => '443',
+			'label' => "Trusted egress domain (PRODUCTION_TRUSTED_EGRESS_DOMAINS): $d",
+		];
+	}
 	return $doc;
 }
 

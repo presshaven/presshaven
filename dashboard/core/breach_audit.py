@@ -698,10 +698,26 @@ def _vulnerable_plugin_dirs() -> list[tuple[str, str, str]]:
     return [(d, cve, name) for d, (cve, name) in seen.items()]
 
 
-def _production_egress_destinations(names: list[str]) -> list[_Reach]:
+def _internet_egress_allowed(target: Target) -> bool:
+    """Whether production's TEMPORARY all-internet egress bypass is currently
+    switched on (PRODUCTION_INTERNET_EGRESS in the edge .env). When it is off
+    -- the default -- production reaching the open internet is a real breach,
+    not a residual-risk warning."""
+    try:
+        env = load_project_env("edge", target.remote)
+    except EnvUploadError:
+        return False
+    return env.get("PRODUCTION_INTERNET_EGRESS", "false").strip().strip("\"'").lower() \
+        in ("1", "true", "yes", "on")
+
+
+def _production_egress_destinations(names: list[str],
+                                    internet_allowed: bool) -> list[_Reach]:
     """Destinations a compromised production_eshop must not be able to pivot to.
-    The open internet is a residual-risk WARN (payment-gateway/CDN plugins
-    legitimately egress); everything else is an outright FAIL if reachable."""
+    The open internet is a FAIL by default (egress is default-deny, so an open
+    path means the firewall is not enforcing); it is downgraded to a
+    residual-risk WARN only while the operator has the temporary install
+    bypass switched on. Everything else is an outright FAIL if reachable."""
     dests = [
         _Reach("Docker daemon (TCP)", "172.17.0.1", 2375, CRITICAL, expectation=_PROD_EXP),
         _Reach("Docker daemon (TLS)", "172.17.0.1", 2376, CRITICAL, expectation=_PROD_EXP),
@@ -716,10 +732,18 @@ def _production_egress_destinations(names: list[str]) -> list[_Reach]:
         if "database" in c:
             dests.append(_Reach(f"honeypot pool {pool} database", c["database"], 3306,
                                 HIGH, expectation=_PROD_EXP))
-    dests.append(_Reach(
-        "open internet (HTTPS)", "1.1.1.1", 443, MEDIUM, open_outcome=WARN,
-        expectation="production egress is ideally restricted to an allowlist -- "
-                    "open internet lets a compromised plugin exfiltrate or pull a payload"))
+    if internet_allowed:
+        dests.append(_Reach(
+            "open internet (HTTPS)", "1.1.1.1", 443, MEDIUM, open_outcome=WARN,
+            expectation="egress is default-deny; the TEMPORARY install bypass is "
+                        "currently ON -- open internet is expected, but turn it off "
+                        "once the plugin/theme install is finished"))
+    else:
+        dests.append(_Reach(
+            "open internet (HTTPS)", "1.1.1.1", 443, HIGH,
+            expectation="egress is default-deny -- the open internet must be "
+                        "unreachable so a compromised plugin cannot exfiltrate or "
+                        "pull a payload (use the trusted-domains allow-list instead)"))
     return dests
 
 
@@ -802,7 +826,8 @@ def run_production_hardening(target: Target, names: list[str], base_url: str,
             SKIP, "production_eshop not found among running containers", HIGH))
         return results
     log("Probing egress / lateral movement from production_eshop …")
-    for dest in _production_egress_destinations(names):
+    internet_allowed = _internet_egress_allowed(target)
+    for dest in _production_egress_destinations(names, internet_allowed):
         cmd = _udp_dns_cmd(dest.host) if dest.udp else _tcp_probe_cmd(dest.host, dest.port)
         try:
             rc, out = _docker_exec(target, prod_eshop, cmd)

@@ -29,9 +29,10 @@ import time
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWebEngineCore import QWebEngineUrlRequestInterceptor
-from PyQt6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QProgressBar,
-                             QPushButton, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
+                             QProgressBar, QPushButton, QVBoxLayout, QWidget)
 
+from core import prod_egress
 from core import wp_studio
 from core.docker_ctl import target_for
 from core.env_upload import EnvUploadError, load_project_env
@@ -39,7 +40,7 @@ from core.eta import EtaTracker, format_eta
 from core.state import AppState
 from ui import theme
 from ui.browser_widget import BrowserWidget
-from ui.common import ErrorBanner, muted_label
+from ui.common import ErrorBanner, Job, muted_label, set_status
 
 # A pool sync is a single scoped mysqldump+apply; generous ceiling so a slow
 # disk or SSH link doesn't cut a legitimate sync short, but it never hangs the
@@ -166,6 +167,7 @@ class WpStudioPage(QWidget):
         super().__init__(parent)
         self.state = state
         self._job: _PropagationJob | None = None
+        self._egress_job: Job | None = None
         self._propagating = False
         self._pool_rows: list[_PoolRow] = []
         self._run_t0 = 0.0
@@ -191,6 +193,7 @@ class WpStudioPage(QWidget):
         root.addWidget(self.error_banner)
 
         root.addWidget(self._build_policy_panel())
+        root.addWidget(self._build_egress_panel())
 
         # Toolbar: propagate button + status.
         bar = QHBoxLayout()
@@ -320,6 +323,118 @@ class WpStudioPage(QWidget):
         cols.addWidget(column("Never leaves production",
                               wp_studio.NEVER_PROPAGATES, c["danger"]), stretch=1)
         return frame
+
+    # ---- internet egress ----
+
+    def _build_egress_panel(self) -> QWidget:
+        """Production internet-egress controls. Production is default-deny:
+        a compromised plugin cannot phone home, so it can never become a path
+        around the honeypots. These two knobs loosen it deliberately and
+        persist to the edge .env (surviving restarts and `down -v`):
+
+          * a TEMPORARY all-internet HTTPS bypass, for installing/updating a
+            plugin or theme, and
+          * a persistent allow-list of specific outbound-443 domains.
+
+        Applying also pushes the matching ruleset to the running production
+        firewall, so it takes effect on the fly (core.prod_egress)."""
+        c = theme.scheme_colors()
+        frame = QFrame()
+        frame.setObjectName("studioEgress")
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setSpacing(4)
+
+        head = QLabel("Production internet egress")
+        head.setStyleSheet("font-weight: 700; font-size: 12px;")
+        lay.addWidget(head)
+        lay.addWidget(muted_label(
+            "Production normally reaches nothing on the public internet, so a "
+            "hijacked plugin cannot phone home or pull a payload. Loosen it "
+            "only while you install or update plugins/themes, then turn it off."))
+
+        self.egress_bypass = QCheckBox(
+            "Temporarily allow all outbound HTTPS (plugin / theme installs)")
+        self.egress_bypass.setToolTip(
+            "Opens outbound 443 from production to the whole internet. Leave off "
+            "in normal operation; turn on only while installing, then off again.")
+        lay.addWidget(self.egress_bypass)
+
+        self.egress_domains = QLineEdit()
+        self.egress_domains.setPlaceholderText(
+            "Trusted domains, comma-separated (e.g. downloads.wordpress.org, "
+            "api.wordpress.org)")
+        self.egress_domains.setToolTip(
+            "Persistent outbound-443 allow-list. Each stays reachable even when "
+            f"the temporary bypass is off. Up to {prod_egress.MAX_DOMAINS}.")
+        lay.addWidget(self.egress_domains)
+
+        bar = QHBoxLayout()
+        self.egress_apply_btn = QPushButton("Apply egress policy")
+        self.egress_apply_btn.setToolTip(
+            "Save to the edge .env and push the ruleset to the running "
+            "production firewall now.")
+        self.egress_apply_btn.clicked.connect(self._apply_egress)
+        bar.addWidget(self.egress_apply_btn)
+        self.egress_status = muted_label("")
+        bar.addWidget(self.egress_status, stretch=1)
+        lay.addLayout(bar)
+
+        self._load_egress_policy()
+        return frame
+
+    def _load_egress_policy(self) -> None:
+        """Prefill the controls from the edge .env (shipped default: deny)."""
+        try:
+            policy = prod_egress.read_policy()
+        except Exception as e:  # noqa: BLE001 -- unreadable .env is non-fatal
+            set_status(self.egress_status, f"could not read the egress policy: {e}",
+                       color=theme.scheme_colors()["warning"])
+            return
+        self.egress_bypass.setChecked(policy.internet_bypass)
+        self.egress_domains.setText(policy.domains_text())
+
+    def _apply_egress(self) -> None:
+        accepted, rejected = prod_egress.parse_domains(self.egress_domains.text())
+        if rejected:
+            self.error_banner.show_message(
+                "These trusted-domain entries were ignored (not a domain, or past "
+                f"the {prod_egress.MAX_DOMAINS}-domain limit): " + ", ".join(rejected))
+        else:
+            self.error_banner.hide()
+        # Reflect the cleaned, deduplicated list back to the operator.
+        self.egress_domains.setText(", ".join(accepted))
+        policy = prod_egress.EgressPolicy(
+            internet_bypass=self.egress_bypass.isChecked(), domains=accepted)
+        remote = self._target().remote
+        self.egress_apply_btn.setEnabled(False)
+        set_status(self.egress_status, "applying…")
+
+        def done(result, error: str) -> None:
+            self._egress_job = None
+            self.egress_apply_btn.setEnabled(True)
+            if error:
+                set_status(self.egress_status, "")
+                self.error_banner.show_message(
+                    "Could not apply the production egress policy "
+                    f"(it is saved to the .env and will apply on redeploy): {error}")
+                return
+            c = theme.scheme_colors()
+            if policy.internet_bypass:
+                msg = "applied: all outbound HTTPS open (remember to turn it off)"
+                color = c["warning"]
+            elif accepted:
+                msg = f"applied: {len(accepted)} trusted domain(s), internet otherwise denied"
+                color = c["success"]
+            else:
+                msg = "applied: production internet egress denied"
+                color = c["success"]
+            set_status(self.egress_status, msg, color=color)
+
+        self._egress_job = Job(
+            lambda: prod_egress.apply_policy(remote, policy), self)
+        self._egress_job.done.connect(done)
+        self._egress_job.start()
 
     # ---- propagation ----
 

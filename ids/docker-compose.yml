@@ -628,6 +628,15 @@ services:
     environment:
       - FIREWALL_PROFILE=production
       - FIREWALL_LAYER=default
+      # Production internet egress is default-deny (see production.json). These
+      # two seed the starting policy on a fresh deploy (before the dashboard's
+      # WordPress Studio page has applied anything, and after a `down -v` wipes
+      # the saved ruleset): a TEMPORARY all-internet HTTPS bypass for plugin /
+      # theme installs, and a persistent allow-list of specific outbound-443
+      # domains. The Studio page edits both on the fly and writes them back
+      # here so they survive restarts.
+      - PRODUCTION_INTERNET_EGRESS=${PRODUCTION_INTERNET_EGRESS:-false}
+      - PRODUCTION_TRUSTED_EGRESS_DOMAINS=${PRODUCTION_TRUSTED_EGRESS_DOMAINS:-}
     networks:
       production_network:
         aliases: [production_eshop]
