@@ -335,6 +335,29 @@ def get_risk_scores(remote: RemoteConfig | None, timeout: float = 15.0) -> dict[
     return scores
 
 
+def _is_private_ip(ip: str) -> bool:
+    """Private/loopback IPv4 -- the admin host's address as the edge sees the
+    WordPress Studio browser. Mirrors is_local_ip() in _UNPOISON_SCRIPT so the
+    live score and the un-poison button agree on which IPs are "ours"."""
+    m = re.match(r"^(\d+)\.(\d+)\.\d+\.\d+$", ip)
+    if not m:
+        return False
+    a, b = int(m.group(1)), int(m.group(2))
+    return a in (10, 127) or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168)
+
+
+def local_threat_score(remote: RemoteConfig | None, timeout: float = 15.0) -> int:
+    """The worst raw threat score currently recorded against a private/local
+    IP -- i.e. the admin host the Studio browser connects from -- or 0 if there
+    is none. This is the stored, un-decayed value (see get_risk_scores), so it
+    is an upper bound on what pattern_analyzer.lua actually applies right now;
+    at or above the honeypot threshold (80) the admin is at risk of being
+    diverted into a honeypot instead of reaching production."""
+    scores = get_risk_scores(remote, timeout=timeout)
+    local = [s for ip, s in scores.items() if _is_private_ip(ip)]
+    return max(local) if local else 0
+
+
 def clear_local_threat_state(remote: RemoteConfig | None, timeout: float = 15.0) -> dict:
     """Un-poisons threat_ips/session/pool-assignment state for the shared
     host IP (see _UNPOISON_SCRIPT) so pattern testing always starts from a

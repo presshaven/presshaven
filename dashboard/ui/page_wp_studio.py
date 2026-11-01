@@ -33,7 +33,9 @@ from PyQt6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
                              QProgressBar, QPushButton, QVBoxLayout, QWidget)
 
 from core import prod_egress
+from core import redis_inspect
 from core import wp_studio
+from core.detection_policy import HONEYPOT_THRESHOLD
 from core.docker_ctl import target_for
 from core.env_upload import EnvUploadError, load_project_env
 from core.eta import EtaTracker, format_eta
@@ -168,6 +170,9 @@ class WpStudioPage(QWidget):
         self.state = state
         self._job: _PropagationJob | None = None
         self._egress_job: Job | None = None
+        self._score_job: Job | None = None
+        self._unpoison_job: Job | None = None
+        self._chrome_collapsed = False
         self._propagating = False
         self._pool_rows: list[_PoolRow] = []
         self._run_t0 = 0.0
@@ -181,19 +186,23 @@ class WpStudioPage(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
+        # Everything above the browser frame lives in one collapsible container,
+        # so the "focus mode" toggle can hand the whole window to the editor.
+        self._chrome = QWidget()
+        chrome = QVBoxLayout(self._chrome)
+        chrome.setContentsMargins(0, 0, 0, 0)
+        chrome.setSpacing(8)
+
         title = QLabel("WordPress Studio")
         title.setStyleSheet("font-size: 17px; font-weight: 700;")
-        root.addWidget(title)
-        root.addWidget(muted_label(
+        chrome.addWidget(title)
+        chrome.addWidget(muted_label(
             "Edit the real shop below. Changes land in production; press "
             "“Propagate to honeypot pools” to mirror them into every decoy at "
             "once, so adversaries always see the same catalog your customers do."))
 
-        self.error_banner = ErrorBanner()
-        root.addWidget(self.error_banner)
-
-        root.addWidget(self._build_policy_panel())
-        root.addWidget(self._build_egress_panel())
+        chrome.addWidget(self._build_policy_panel())
+        chrome.addWidget(self._build_egress_panel())
 
         # Toolbar: propagate button + status.
         bar = QHBoxLayout()
@@ -207,7 +216,7 @@ class WpStudioPage(QWidget):
         bar.addWidget(self.status_label, stretch=1)
         self.eta_label = muted_label("")
         bar.addWidget(self.eta_label)
-        root.addLayout(bar)
+        chrome.addLayout(bar)
 
         # Progress area (hidden until a run). Overall bar + per-pool rows.
         self.progress_box = QFrame()
@@ -224,7 +233,18 @@ class WpStudioPage(QWidget):
         self.pool_rows_box.setSpacing(0)
         pbl.addLayout(self.pool_rows_box)
         self.progress_box.setVisible(False)
-        root.addWidget(self.progress_box)
+        chrome.addWidget(self.progress_box)
+
+        root.addWidget(self._chrome)
+
+        # Error banner stays outside the collapsible chrome so an alert (e.g. a
+        # rejected sign-in) is still seen in focus mode.
+        self.error_banner = ErrorBanner()
+        root.addWidget(self.error_banner)
+
+        # Always-visible strip right above the browser: the focus toggle plus a
+        # live routing/score readout and the un-poison button (built below).
+        root.addWidget(self._build_studio_bar())
 
         # The embedded admin browser, pinned to production via header injection.
         self._interceptor = _StudioInterceptor(self._internal_secret())
@@ -243,6 +263,11 @@ class WpStudioPage(QWidget):
         self._eta_timer = QTimer(self)
         self._eta_timer.setInterval(1000)
         self._eta_timer.timeout.connect(self._tick_eta)
+
+        # Live routing/score poll (only while this page is on screen).
+        self._score_timer = QTimer(self)
+        self._score_timer.setInterval(6000)
+        self._score_timer.timeout.connect(self._poll_score)
 
     # ---- helpers ----
 
@@ -435,6 +460,121 @@ class WpStudioPage(QWidget):
             lambda: prod_egress.apply_policy(remote, policy), self)
         self._egress_job.done.connect(done)
         self._egress_job.start()
+
+    # ---- focus toggle + live routing score ----
+
+    def _build_studio_bar(self) -> QWidget:
+        """The always-visible strip above the browser: a focus-mode toggle that
+        collapses all the chrome, a live routing/score readout for the admin's
+        own session, and an un-poison button. The score matters because the
+        admin edits through the same edge that diverts attackers: if this
+        browser is ever scored up and mis-routed into a honeypot, the readout
+        goes red and un-poisoning clears the admin host's score + sticky pool
+        assignment so the next request lands back on production."""
+        c = theme.scheme_colors()
+        frame = QFrame()
+        frame.setObjectName("studioBar")
+        lay = QHBoxLayout(frame)
+        lay.setContentsMargins(8, 4, 8, 4)
+        lay.setSpacing(8)
+
+        self.collapse_btn = QPushButton("▸ Focus mode (hide controls)")
+        self.collapse_btn.setToolTip(
+            "Collapse everything above the browser to edit full-screen. The "
+            "routing readout and un-poison button stay visible.")
+        self.collapse_btn.clicked.connect(self._toggle_chrome)
+        lay.addWidget(self.collapse_btn)
+
+        self.score_label = muted_label("checking routing…")
+        self.score_label.setToolTip(
+            "The worst threat score the edge currently holds against your "
+            "admin host. At or above the honeypot threshold (80) your edits "
+            "may be diverted into a decoy instead of reaching production.")
+        lay.addWidget(self.score_label, stretch=1)
+
+        self.unpoison_btn = QPushButton("Un-poison my session")
+        self.unpoison_btn.setToolTip(
+            "Clear your admin host's threat score, scored sessions and sticky "
+            "honeypot assignment so the next request is routed to production. "
+            "Only affects private/local IPs -- never a real attacker's.")
+        self.unpoison_btn.clicked.connect(self._unpoison)
+        lay.addWidget(self.unpoison_btn)
+        return frame
+
+    def _toggle_chrome(self) -> None:
+        self._chrome_collapsed = not self._chrome_collapsed
+        self._chrome.setVisible(not self._chrome_collapsed)
+        self.collapse_btn.setText("▾ Show controls" if self._chrome_collapsed
+                                  else "▸ Focus mode (hide controls)")
+
+    def _poll_score(self) -> None:
+        """Fetch the admin host's worst threat score off the GUI thread."""
+        if self._score_job is not None:
+            return  # a fetch is already in flight
+        remote = self._target().remote
+        self._score_job = Job(lambda: redis_inspect.local_threat_score(remote), self)
+        self._score_job.done.connect(self._on_score)
+        self._score_job.start()
+
+    def _on_score(self, score, error: str) -> None:
+        self._score_job = None
+        c = theme.scheme_colors()
+        if error:
+            # Redis unreachable (stack down, SSH hiccup): don't cry wolf.
+            set_status(self.score_label, "routing score unavailable", color=c["fg_muted"])
+            return
+        score = int(score or 0)
+        if score >= HONEYPOT_THRESHOLD:
+            set_status(self.score_label,
+                       f"⚠ DIVERTED RISK: admin host scored {score}/100 "
+                       f"(≥ {HONEYPOT_THRESHOLD}) — edits may hit a honeypot. Un-poison now.",
+                       color=c["danger"])
+        elif score > 0:
+            set_status(self.score_label,
+                       f"admin host scored {score}/100 (below the {HONEYPOT_THRESHOLD} "
+                       "honeypot threshold) — still routed to production",
+                       color=c["warning"])
+        else:
+            set_status(self.score_label, "routing clean (score 0) — pinned to production",
+                       color=c["success"])
+
+    def _unpoison(self) -> None:
+        if self._unpoison_job is not None:
+            return
+        remote = self._target().remote
+        self.unpoison_btn.setEnabled(False)
+        set_status(self.score_label, "un-poisoning…")
+
+        def done(result, error: str) -> None:
+            self._unpoison_job = None
+            self.unpoison_btn.setEnabled(True)
+            if error:
+                self.error_banner.show_message(f"Could not un-poison the session: {error}")
+                return
+            summary = result or {}
+            n_sess = summary.get("sessions_removed", 0)
+            n_ips = len(summary.get("threat_ips_removed", []) or [])
+            self.error_banner.hide()
+            c = theme.scheme_colors()
+            set_status(self.score_label,
+                       f"un-poisoned: cleared {n_sess} session(s), {n_ips} IP score(s) "
+                       "— reload the admin to route to production",
+                       color=c["success"])
+            self._poll_score()
+
+        self._unpoison_job = Job(
+            lambda: redis_inspect.clear_local_threat_state(remote), self)
+        self._unpoison_job.done.connect(done)
+        self._unpoison_job.start()
+
+    def showEvent(self, event) -> None:  # noqa: N802 -- Qt override
+        super().showEvent(event)
+        self._poll_score()
+        self._score_timer.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 -- Qt override
+        super().hideEvent(event)
+        self._score_timer.stop()
 
     # ---- propagation ----
 
