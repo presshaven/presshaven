@@ -1,11 +1,13 @@
 -- test_trusted_callbacks.lua - Standalone unit tests
 --
 -- Runs under a plain `lua` interpreter. Covers the trusted payment/OAuth
--- callback allowlist in pattern_rules.lua (untrusted_callback_host and the
--- untrusted_external_callback scoring in analyze_uri_patterns): a shop's
+-- callback allowlist in pattern_rules.lua (untrusted_callback_host): a shop's
 -- legitimate gateway/OAuth callbacks to known providers or its own host must
 -- NOT be flagged, while an absolute URL to anyone else (the shape of an RFI /
--- open-redirect / SSRF payload) must be.
+-- open-redirect / SSRF payload) must be -- that host is then blocked OUTRIGHT
+-- with a 403 in nginx.conf's access phase (NOT scored or routed, so a callback
+-- link planted and sent to an innocent visitor cannot divert/mislabel them).
+-- These tests also assert analyze_uri_patterns adds no callback score.
 --
 -- Usage:
 --   cd ids/reverse_proxy_enhanced/lua/tests

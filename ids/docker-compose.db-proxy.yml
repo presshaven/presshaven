@@ -416,7 +416,7 @@ services:
     cpus: "1.0"
     pids_limit: 300
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]  # no credentials: "alive" even on access denied, and no password in `docker inspect`
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]  # TCP, NOT the local socket: "healthy" must mean the NETWORKED server accepts connections. A `-h localhost` socket ping also answers the official image's temporary --skip-networking bootstrap server, so it goes green before TCP is up and releases service_healthy dependents too early. 127.0.0.1 forces TCP. Still no credentials: "alive" (exit 0) even on access denied, and no password in `docker inspect`
       interval: 30s
       timeout: 5s
       retries: 5
@@ -854,7 +854,7 @@ services:
     cpus: "0.5"
     pids_limit: 200
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]  # no credentials: "alive" even on access denied, and no password in `docker inspect`
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]  # TCP, NOT the local socket: "healthy" must mean the NETWORKED server accepts connections. A `-h localhost` socket ping also answers the official image's temporary --skip-networking bootstrap server, so it goes green before TCP is up and releases service_healthy dependents too early. 127.0.0.1 forces TCP. Still no credentials: "alive" (exit 0) even on access denied, and no password in `docker inspect`
       interval: 30s
       timeout: 5s
       retries: 5

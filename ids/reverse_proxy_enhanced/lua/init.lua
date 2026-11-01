@@ -341,9 +341,11 @@ _G.config = {
         -- payment-gateway return/notify callback or OAuth redirect URI may point
         -- at (built above: baked provider list + TRUSTED_CALLBACK_DOMAINS env +
         -- the shop's own WP_SITE_URL host). An absolute http(s)/ftp URL in a
-        -- request URI pointing anywhere else scores as untrusted_external_callback
-        -- -- this is what lets the generic RFI/open-redirect/SSRF signatures stay
-        -- on without false-positiving on a WooCommerce shop's legitimate callbacks.
+        -- request URI pointing anywhere else is blocked OUTRIGHT with a 403 in
+        -- nginx.conf's access phase (before scoring or routing) -- never scored,
+        -- so a callback link planted and sent to an innocent visitor cannot
+        -- divert or mislabel them. Legitimate WooCommerce gateway/OAuth callbacks
+        -- point at a trusted host and pass.
         trusted_callback_domains = TRUSTED_CALLBACK_DOMAINS,
 
         -- static_asset_patterns: URI suffixes and path prefixes that identify

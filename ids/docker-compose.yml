@@ -587,7 +587,7 @@ services:
     cpus: "1.0"
     pids_limit: 300
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]  # no credentials: "alive" even on access denied, and no password in `docker inspect`
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]  # TCP, NOT the local socket: "healthy" must mean the NETWORKED server accepts connections. A `-h localhost` socket ping also answers the official image's temporary --skip-networking bootstrap server, so it goes green before TCP is up and releases service_healthy dependents (e.g. production_db_seed) too early -- they then fail to connect over TCP and exit. 127.0.0.1 forces TCP. Still no credentials: "alive" (exit 0) even on access denied, and no password in `docker inspect`
       interval: 30s
       timeout: 5s
       retries: 5
@@ -1178,7 +1178,7 @@ services:
     cpus: "0.5"
     pids_limit: 200
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]  # no credentials: "alive" even on access denied, and no password in `docker inspect`
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]  # TCP, NOT the local socket: "healthy" must mean the NETWORKED server accepts connections. A `-h localhost` socket ping also answers the official image's temporary --skip-networking bootstrap server, so it goes green before TCP is up and releases service_healthy dependents (e.g. production_db_seed) too early -- they then fail to connect over TCP and exit. 127.0.0.1 forces TCP. Still no credentials: "alive" (exit 0) even on access denied, and no password in `docker inspect`
       interval: 30s
       timeout: 5s
       retries: 5
@@ -1241,7 +1241,7 @@ services:
     cpus: "0.5"
     pids_limit: 200
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]  # no credentials: "alive" even on access denied, and no password in `docker inspect`
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]  # TCP, NOT the local socket: "healthy" must mean the NETWORKED server accepts connections. A `-h localhost` socket ping also answers the official image's temporary --skip-networking bootstrap server, so it goes green before TCP is up and releases service_healthy dependents (e.g. production_db_seed) too early -- they then fail to connect over TCP and exit. 127.0.0.1 forces TCP. Still no credentials: "alive" (exit 0) even on access denied, and no password in `docker inspect`
       interval: 30s
       timeout: 5s
       retries: 5
@@ -1304,7 +1304,7 @@ services:
     cpus: "0.5"
     pids_limit: 200
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]  # no credentials: "alive" even on access denied, and no password in `docker inspect`
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]  # TCP, NOT the local socket: "healthy" must mean the NETWORKED server accepts connections. A `-h localhost` socket ping also answers the official image's temporary --skip-networking bootstrap server, so it goes green before TCP is up and releases service_healthy dependents (e.g. production_db_seed) too early -- they then fail to connect over TCP and exit. 127.0.0.1 forces TCP. Still no credentials: "alive" (exit 0) even on access denied, and no password in `docker inspect`
       interval: 30s
       timeout: 5s
       retries: 5
@@ -2139,7 +2139,7 @@ services:
       # shop's own host is auto-derived from WP_SITE_URL; TRUSTED_CALLBACK_DOMAINS
       # is an optional comma-separated list of extra gateway/bank domains to add
       # to the baked-in default set. Absolute URLs in a request URI pointing
-      # anywhere else score as untrusted_external_callback (RFI/open-redirect/SSRF).
+      # anywhere else (RFI/open-redirect/SSRF) are blocked outright with a 403.
       - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
       - TRUSTED_CALLBACK_DOMAINS=${TRUSTED_CALLBACK_DOMAINS:-}
       # Threat decay: set THREAT_DECAY_ENABLED=false to make session/IP threat

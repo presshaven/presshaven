@@ -833,7 +833,12 @@ class Manager:
             log_config=LOG_CONFIG, restart_policy={"Name": "unless-stopped"},
             # Every 30 s once healthy (each probe is a docker exec; ten pools
             # at 10 s kept dockerd/containerd busy), every 1 s until then.
-            healthcheck={"test": ["CMD", "mysqladmin", "ping", "-h", "localhost"],
+            # 127.0.0.1 (TCP), NOT localhost (socket): the socket ping also
+            # answers the image's temporary --skip-networking bootstrap server
+            # and would go green before the networked server accepts TCP,
+            # releasing service_healthy dependents too early. No credentials:
+            # "alive" (exit 0) even on access denied, no password in inspect.
+            healthcheck={"test": ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"],
                          "interval": 30 * NS, "timeout": 5 * NS, "retries": 5,
                          "start_period": 60 * NS, "start_interval": 1 * NS})
 
