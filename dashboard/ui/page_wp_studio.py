@@ -266,7 +266,7 @@ class WpStudioPage(QWidget):
 
         # Live routing/score poll (only while this page is on screen).
         self._score_timer = QTimer(self)
-        self._score_timer.setInterval(6000)
+        self._score_timer.setInterval(5000)
         self._score_timer.timeout.connect(self._poll_score)
 
     # ---- helpers ----

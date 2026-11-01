@@ -7,6 +7,14 @@
   --fh-serif: "Libre Baskerville", Georgia, "Times New Roman", serif;
   --fh-sans: "Outfit", "Roboto", system-ui, -apple-system, "Segoe UI", sans-serif;
   --fh-radius: 10px; --fh-shadow: 0 6px 24px rgba(43, 29, 20, .08);
+  /* Omega Storefront's own .wrapper keeps growing past its 1140px base (1400px
+     at 1441px+, 1520px at 1700px+, 1620px at 1920px+ -- see style.css), but
+     this theme's .fh-wrap had a single flat 1240px cap with no equivalent, so
+     the homepage (which is laid out entirely in .fh-wrap, not .wrapper -- see
+     body.fh-store.home below) stopped growing past ~1280px viewports while
+     every other page kept scaling up. Mirroring the same breakpoints here
+     keeps the whole site -- including the homepage -- scaling in step. */
+  --fh-wrap-max: 1240px;
 }
 
 body.fh-store { background: var(--fh-cream); color: var(--fh-ink); font-family: var(--fh-sans); font-size: 16px; line-height: 1.65; -webkit-font-smoothing: antialiased; }
@@ -14,7 +22,10 @@ body.fh-store h1, body.fh-store h2, body.fh-store h3, body.fh-store h4 { font-fa
 body.fh-store a { color: var(--fh-fern); text-decoration: none; }
 body.fh-store a:hover { color: var(--fh-fern-d); text-decoration: underline; }
 body.fh-store img { max-width: 100%; height: auto; }
-.fh-wrap { width: min(1240px, 100% - 40px); margin-inline: auto; }
+.fh-wrap { width: min(var(--fh-wrap-max), 100% - 40px); margin-inline: auto; }
+@media (min-width: 1441px) { :root { --fh-wrap-max: 1320px; } }
+@media (min-width: 1700px) { :root { --fh-wrap-max: 1400px; } }
+@media (min-width: 1920px) { :root { --fh-wrap-max: 1480px; } }
 
 /* ---------------------------------------------------------------- announce */
 .fh-announce { background: var(--fh-fern-d); color: #eaf2e8; font-size: 13px; letter-spacing: .02em; }
@@ -109,7 +120,7 @@ body.fh-store #content.site-content { background: transparent; }
 body.fh-store.home #content .singular-main-block, body.fh-store.home .entry-header, body.fh-store.home .entry-breadcrumb { padding: 0; margin: 0; }
 body.fh-store.home .wrapper, body.fh-store.home .column-row, body.fh-store.home #primary { width: 100%; max-width: none; padding: 0; margin: 0; float: none; }
 body.fh-store.home .entry-header, body.fh-store.home .breadcrumbs, body.fh-store.home .entry-title { display: none; }
-body.fh-store .wrapper { width: min(1240px, 100% - 40px); max-width: 1240px; margin-inline: auto; }
+body.fh-store .wrapper { width: min(var(--fh-wrap-max), 100% - 40px); max-width: var(--fh-wrap-max); margin-inline: auto; }
 body.fh-store .singular-main-block { padding: 40px 0 70px; }
 body.fh-store .entry-title, body.fh-store .page-title, body.fh-store .woocommerce-products-header__title { font-size: clamp(28px, 3.4vw, 40px); margin-bottom: 18px; }
 body.fh-store .woocommerce-breadcrumb, body.fh-store .breadcrumbs { font-size: 13px; color: var(--fh-muted); margin-bottom: 22px; }
