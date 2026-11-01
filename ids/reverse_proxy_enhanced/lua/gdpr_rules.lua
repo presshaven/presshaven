@@ -52,9 +52,34 @@ _M.SIG_REDIS_PREFIX = "gdpr_honeypot_sig:"
 -- the per-request re-encryptions the browser does to keep the token fresh.
 _M.TIMESTAMP_KEYS = { t = true, ts = true, timestamp = true }
 
+-- Payload keys that carry the logged-in WordPress username (set by
+-- gdpr_client.js ONLY when the visitor is logged in), which is metadata ABOUT
+-- the browser's owner, not an identifying characteristic OF the browser.
+-- Stripped before the signature is computed for the same reason the timestamp
+-- is: the signature MUST stay identical whether or not the user is logged in.
+-- If the username fed the signature, then logging out -- or clearing cookies,
+-- which logs them out -- would change the signature and defeat the entire
+-- recognise-the-same-browser-across-wipes purpose this module exists for. The
+-- username is surfaced separately (extract_username) so the adapter can record
+-- it ALONGSIDE a honeypot binding: who the signature belonged to while they
+-- were logged in, carried through so a later wiped-and-returned (hence
+-- logged-out) visit can still be reunited with that account -- never part of
+-- the one-way signature itself.
+_M.IDENTITY_KEYS = { u = true, user = true, username = true }
+
+-- Fixed precedence when more than one identity key is present, so the chosen
+-- username is deterministic regardless of JSON/table iteration order.
+local IDENTITY_KEY_ORDER = { "username", "user", "u" }
+
 -- Hard cap on the decrypted plaintext length the adapter will hand us. A
--- well-formed demo payload is ~30 bytes; anything far larger is malformed.
+-- well-formed demo payload is ~30 bytes; with a username it is still well under
+-- this -- anything far larger is malformed.
 _M.MAX_PLAINTEXT_LEN = 512
+
+-- WordPress's user_login column is 60 chars; a username longer than this could
+-- not name a real account, so cap it (defence against a crafted oversized
+-- token padding a binding value).
+_M.MAX_USERNAME_LEN = 60
 
 --- Whether a payload timestamp is inside the freshness window.
 --- Symmetric around `now` so a little forward clock skew on the client is
@@ -88,6 +113,7 @@ function _M.canonical_characteristics(payload)
     local keys = {}
     for k, v in pairs(payload) do
         if not _M.TIMESTAMP_KEYS[k]
+            and not _M.IDENTITY_KEYS[k]
             and (type(v) == "string" or type(v) == "number") then
             keys[#keys + 1] = k
         end
@@ -101,6 +127,34 @@ function _M.canonical_characteristics(payload)
         parts[#parts + 1] = tostring(k) .. "=" .. tostring(payload[k])
     end
     return table.concat(parts, "&")
+end
+
+--- The logged-in WordPress username carried in `payload`, if any. Returns the
+--- first IDENTITY_KEYS value present (in a fixed precedence) that is a
+--- non-empty string, trimmed and length-capped; nil otherwise. This is pure
+--- metadata extraction -- it has NO effect on canonical_characteristics (which
+--- strips the same keys) and therefore none on the signature. The adapter uses
+--- it to stamp a username onto a honeypot binding, never to alter the hash.
+---
+--- @param payload  table|nil
+--- @return string|nil
+function _M.extract_username(payload)
+    if type(payload) ~= "table" then
+        return nil
+    end
+    for _, k in ipairs(IDENTITY_KEY_ORDER) do
+        local v = payload[k]
+        if type(v) == "string" then
+            v = v:gsub("^%s+", ""):gsub("%s+$", "")
+            if v ~= "" then
+                if #v > _M.MAX_USERNAME_LEN then
+                    v = v:sub(1, _M.MAX_USERNAME_LEN)
+                end
+                return v
+            end
+        end
+    end
+    return nil
 end
 
 --- Validate a decoded payload and return the canonical characteristics string

@@ -454,6 +454,66 @@ services:
       net.ipv4.ip_forward: 0
 
   # ---------------------------------------------------------------------------
+  # Honeypot ACCOUNT sync ("account persistence", request 26).
+  #
+  # Sibling of honeypot_content_sync above, same image and same network bridge
+  # (the ONLY two services that touch both production_network and
+  # honeypot_network, because only they copy production -> pool). Where the
+  # content sync mirrors catalog/content on a timer, this one is a Redis queue
+  # CONSUMER: it BLPOPs honeypot_user_copy_queue and copies the single diverted
+  # adversary's OWN wp_users/wp_usermeta rows (role, profile, password hash,
+  # email) from production into the pool they were sent to, so the honeypot
+  # auto-logs them in as the same account (honeypot-account-autologin.php) and
+  # nothing hints at the diversion. The queue is fed by the edge
+  # (gdpr_handler.enqueue_user_replication), keyed off the PRODUCTION-VERIFIED
+  # username only -- see scripts/replicate_user_to_honeypot.sh for the full
+  # security rationale and why this one narrow copy is allowed to cross the
+  # otherwise-strict "no real accounts in a honeypot" boundary.
+  # ---------------------------------------------------------------------------
+  honeypot_user_sync:
+    # tini as PID 1: forwards SIGTERM so `down` stops the BLPOP loop cleanly.
+    init: true
+    logging: *default-logging
+    build: ./images/content_sync
+    depends_on:
+      honeypot_db_migration:
+        condition: service_completed_successfully
+      session_store:
+        condition: service_healthy
+      # The copy targets EXISTING wp_users/wp_usermeta tables (scoped
+      # DELETE + REPLACE INTO), never schema creation, so every pool's schema
+      # and production's must already exist -- same reasoning as
+      # honeypot_content_sync's seed dependencies above.
+      production_db_seed:
+        condition: service_completed_successfully
+      honeypot_db_seed_1:
+        condition: service_completed_successfully
+      honeypot_db_seed_2:
+        condition: service_completed_successfully
+      honeypot_db_seed_3:
+        condition: service_completed_successfully
+    volumes:
+      - ./scripts/replicate_user_to_honeypot.sh:/replicate_user_to_honeypot.sh:ro
+    environment:
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_PASSWORD_POOL_1=${MYSQL_PASSWORD_POOL_1}
+      - MYSQL_PASSWORD_POOL_2=${MYSQL_PASSWORD_POOL_2}
+      - MYSQL_PASSWORD_POOL_3=${MYSQL_PASSWORD_POOL_3}
+      - REDIS_HOST=session_store
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - USER_SYNC_BLOCK_SECONDS=${USER_SYNC_BLOCK_SECONDS:-15}
+    command: ["bash", "/replicate_user_to_honeypot.sh"]
+    restart: unless-stopped
+    networks:
+      - production_network
+      - honeypot_network
+      - session_network
+    # On honeypot_network and the stack's other networks: never a router
+    # between them (Docker leaves ip_forward on in every container namespace).
+    sysctls:
+      net.ipv4.ip_forward: 0
+
+  # ---------------------------------------------------------------------------
   # Honeypot pool manager (one user per pool, spare pool always ready)
   # ---------------------------------------------------------------------------
   # pool_router.lua gives each new user IP a free ready pool exclusively and
@@ -1376,6 +1436,12 @@ services:
       - WORDPRESS_DEBUG_LOG=1
       # Pool identifier exposed to PHP code for logging / X-Honeypot-Pool header
       - HONEYPOT_POOL_ID=1
+      # Shared secret the edge presents on the internal X-Honeypot-Autologin-User
+      # request (account persistence, request 26). The honeypot-account-autologin
+      # mu-plugin ONLY adopts the named account when X-Internal-Test-Auth matches
+      # this, so a client cannot forge an auto-login. Same secret the reverse
+      # proxy holds; blank disables the feature on this pool (fails safe).
+      - INTERNAL_TEST_SECRET=${INTERNAL_TEST_SECRET:-}
     # ports:
     #   - "8081:80" # temporary port for direct pool-1 access
     volumes:
@@ -1512,6 +1578,8 @@ services:
       - WORDPRESS_DEBUG=1
       - WORDPRESS_DEBUG_LOG=1
       - HONEYPOT_POOL_ID=2
+      # See pool-1: internal auto-login secret (account persistence, request 26).
+      - INTERNAL_TEST_SECRET=${INTERNAL_TEST_SECRET:-}
     # ports:
     #   - "8082:80" # temporary port for direct pool-2 access
     volumes:
@@ -1615,6 +1683,8 @@ services:
       - WORDPRESS_DEBUG=1
       - WORDPRESS_DEBUG_LOG=1
       - HONEYPOT_POOL_ID=3
+      # See pool-1: internal auto-login secret (account persistence, request 26).
+      - INTERNAL_TEST_SECRET=${INTERNAL_TEST_SECRET:-}
     # ports:
     #   - "8083:80" # temporary port for direct pool-3 access
     volumes:

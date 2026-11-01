@@ -56,6 +56,40 @@ check("same browser, different IP -> different canonical",
 check("non-scalar values ignored", r.canonical_characteristics({ x = {}, t = NOW }) == nil)
 check("only-a-timestamp yields nil", r.canonical_characteristics({ t = NOW }) == nil)
 check("non-table yields nil", r.canonical_characteristics("nope") == nil)
+-- The logged-in username is metadata, NOT a browser characteristic: it must be
+-- stripped before hashing so the signature is identical whether or not the user
+-- is logged in (logging out, or clearing cookies, must not change it).
+check("username key 'u' stripped from canonical",
+      r.canonical_characteristics({ s = "1920x1080", u = "alice", t = NOW }) == "s=1920x1080")
+check("username key 'username' stripped from canonical",
+      r.canonical_characteristics({ s = "1920x1080", username = "alice", t = NOW }) == "s=1920x1080")
+check("logged-in vs logged-out yield identical characteristics",
+      r.canonical_characteristics({ s = "1920x1080", u = "alice", t = NOW })
+      == r.canonical_characteristics({ s = "1920x1080", t = NOW }))
+check("different usernames do not change characteristics",
+      r.canonical_characteristics({ s = "1920x1080", u = "alice" })
+      == r.canonical_characteristics({ s = "1920x1080", u = "bob" }))
+
+print("== extract_username() ==")
+check("returns nil when no identity key present",
+      r.extract_username({ s = "1920x1080", t = NOW }) == nil)
+check("extracts 'u'", r.extract_username({ u = "alice" }) == "alice")
+check("extracts 'user'", r.extract_username({ user = "bob" }) == "bob")
+check("extracts 'username'", r.extract_username({ username = "carol" }) == "carol")
+check("precedence: username > user > u",
+      r.extract_username({ u = "fromU", user = "fromUser", username = "fromUsername" }) == "fromUsername")
+check("precedence: user > u when no username",
+      r.extract_username({ u = "fromU", user = "fromUser" }) == "fromUser")
+check("surrounding whitespace is trimmed",
+      r.extract_username({ u = "  alice  " }) == "alice")
+check("empty / whitespace-only value is skipped",
+      r.extract_username({ username = "   ", u = "alice" }) == "alice")
+check("non-string value is ignored",
+      r.extract_username({ u = 12345 }) == nil)
+check("oversized username is capped at MAX_USERNAME_LEN",
+      #r.extract_username({ u = string.rep("x", r.MAX_USERNAME_LEN + 50) }) == r.MAX_USERNAME_LEN)
+check("non-table payload yields nil", r.extract_username("nope") == nil)
+check("nil payload yields nil", r.extract_username(nil) == nil)
 
 print("== determinism: same browser -> same canonical (=> same signature) ==")
 local p1 = { s = "1920x1080", t = NOW }
@@ -85,6 +119,9 @@ check("nil payload (decode failure) rejected", canon == nil and status == "not_t
 print("== constants ==")
 check("cookie name is gdpr_token", r.COOKIE_NAME == "gdpr_token")
 check("redis prefix present", type(r.SIG_REDIS_PREFIX) == "string" and #r.SIG_REDIS_PREFIX > 0)
+check("max username len is WordPress user_login limit", r.MAX_USERNAME_LEN == 60)
+check("identity keys cover u/user/username",
+      r.IDENTITY_KEYS.u and r.IDENTITY_KEYS.user and r.IDENTITY_KEYS.username and true)
 
 print(string.format("\n%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

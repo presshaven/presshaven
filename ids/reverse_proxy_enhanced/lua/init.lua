@@ -204,12 +204,21 @@ _G.config = {
     --                      user never ages out, but an abandoned one does --
     --                      and nothing identifiable is stored either way (only
     --                      the one-way signature, as a Redis key with this TTL).
+    --   auth_identity_ttl – GDPR_AUTH_IDENTITY_TTL (default 3600s): how long the
+    --                      edge caches, per session, the production-VERIFIED
+    --                      logged-in account (from production's X-Auth-User
+    --                      header) so a later diversion of that same session
+    --                      knows which real account to copy into the pool. Set
+    --                      to the session idle window so it never outlives the
+    --                      session it describes. This caches a username only,
+    --                      never a credential.
     -- -----------------------------------------------------------------------
     gdpr = {
         enabled = (os.getenv("GDPR_ENABLED") or "true"):lower() ~= "false",
         private_key_b64 = os.getenv("GDPR_PRIVATE_KEY") or "",
         timestamp_window = tonumber(os.getenv("GDPR_TIMESTAMP_WINDOW")) or 300,
         binding_ttl = tonumber(os.getenv("GDPR_BINDING_TTL")) or 3600,
+        auth_identity_ttl = tonumber(os.getenv("GDPR_AUTH_IDENTITY_TTL")) or 3600,
     },
 
     -- -----------------------------------------------------------------------

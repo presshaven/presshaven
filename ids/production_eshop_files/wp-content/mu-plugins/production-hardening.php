@@ -393,8 +393,8 @@ add_filter( 'rest_endpoints', function ( array $endpoints ): array {
                 // Wrap the existing permission callback to require authentication.
                 if ( isset( $handler['permission_callback'] ) ) {
                     $original = $handler['permission_callback'];
-                    $endpoints[ $endpoint ][ $index ]['permission_callback'] = function () use ( $original ) {
-                        return is_user_logged_in() && call_user_func( $original );
+                    $endpoints[ $endpoint ][ $index ]['permission_callback'] = function ( $request ) use ( $original ) {
+                        return is_user_logged_in() && call_user_func( $original, $request );
                     };
                 } else {
                     $endpoints[ $endpoint ][ $index ]['permission_callback'] = 'is_user_logged_in';

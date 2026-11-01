@@ -156,6 +156,13 @@ end
 --- @return table  {
 ---   consent   = boolean,      -- did the client send a (non-empty) token?
 ---   signature = string|nil,   -- one-way signature, only when valid+fresh
+---   username  = string|nil,   -- logged-in WP username the token CLAIMS, if
+---                             --  any. Self-reported by the client and so
+---                             --  SPOOFABLE: only ever used for logging and
+---                             --  to label a binding; the account COPY is
+---                             --  keyed off the production-verified identity
+---                             --  (X-Auth-User), never this. nil when the
+---                             --  token carried no username (logged-out visit).
 ---   status    = string,       -- "disabled"|"no_consent"|"undecryptable"
 ---                             --  |"bad_json"|<gdpr_rules reason>|"ok"
 --- }
@@ -183,6 +190,13 @@ function _M.process_request()
         return { consent = true, status = "bad_json" }
     end
 
+    -- Pull the self-reported username out BEFORE validate()/the signature so it
+    -- survives even a token the client built from stale characteristics. It is
+    -- metadata, not a characteristic: gdpr_rules strips the same keys from the
+    -- canonical string, so this cannot move the signature. SPOOFABLE -- see the
+    -- doc on this function's return and bind_signature_to_honeypot().
+    local claimed_username = gdpr_rules.extract_username(payload)
+
     -- Append the client's IP, as the proxy sees it, as one more identifying
     -- characteristic BEFORE the signature is derived. The browser can't know
     -- its own public address, so rather than round-trip it to the client and
@@ -203,10 +217,15 @@ function _M.process_request()
     if not canonical then
         -- A sent-but-invalid token (e.g. expired timestamp) is treated as a
         -- non-match, per spec: we just don't compute a signature from it.
-        return { consent = true, status = reason }
+        return { consent = true, status = reason, username = claimed_username }
     end
 
-    return { consent = true, signature = compute_signature(canonical), status = "ok" }
+    return {
+        consent   = true,
+        signature = compute_signature(canonical),
+        username  = claimed_username,
+        status    = "ok",
+    }
 end
 
 --- Is `signature` currently bound to a honeypot and unexpired? On a match the
@@ -241,7 +260,16 @@ end
 --- honeypot, for ANY reason -- that's how a known-bad browser's signature gets
 --- remembered so a later cookie/localStorage wipe + re-consent lands back in
 --- the honeypot. The key's TTL is the binding expiry.
-function _M.bind_signature_to_honeypot(signature, pool, reason)
+---
+--- `username`, when given, is the PRODUCTION-VERIFIED account this browser was
+--- authenticated as at the moment it turned suspicious (lookup_auth_identity /
+--- the X-Auth-User header production emits -- NEVER the spoofable token
+--- username). It is stamped onto the binding so that a later wiped-and-returned
+--- visit -- which is logged out and so carries no username at all -- can still
+--- be reunited with, and auto-logged-into, the same account on the pool. An
+--- existing binding's username is PRESERVED when this call passes none, so a
+--- later anonymous re-bind never erases who the signature belonged to.
+function _M.bind_signature_to_honeypot(signature, pool, reason, username)
     if not _enabled or type(signature) ~= "string" or signature == "" then
         return
     end
@@ -251,14 +279,133 @@ function _M.bind_signature_to_honeypot(signature, pool, reason)
         return
     end
     local key = gdpr_rules.SIG_REDIS_PREFIX .. signature
+
+    -- Preserve an already-recorded username when this bind doesn't supply one
+    -- (e.g. a logged-out returning visit re-confirming the binding).
+    if type(username) ~= "string" or username == "" then
+        username = nil
+        local existing = red:get(key)
+        if existing and existing ~= ngx.null then
+            local prev = cjson.decode(existing)
+            if type(prev) == "table" and type(prev.username) == "string" and prev.username ~= "" then
+                username = prev.username
+            end
+        end
+    end
+
     red:setex(key, cfg().binding_ttl, cjson.encode({
         pool     = pool,
         reason   = reason or "unknown",
         bound_at = ngx.time(),
+        username = username,   -- may be nil (omitted from JSON) for an anon binding
     }))
     _G.redis_pool.close_connection(red)
     ngx.log(ngx.WARN, "[GDPR] Signature bound to honeypot pool ", tostring(pool),
-        " (reason=", tostring(reason), ", ttl=", cfg().binding_ttl, "s)")
+        " (reason=", tostring(reason), ", user=", tostring(username),
+        ", ttl=", cfg().binding_ttl, "s)")
+end
+
+-- Redis key under which the edge caches, per live session, the account the
+-- PRODUCTION WordPress reported this session is authenticated as. Production is
+-- the only authority on who is actually logged in (it emits X-Auth-User /
+-- X-Auth-Role on that user's own responses); the edge stashes it here keyed by
+-- session so that when the SAME session is later diverted to a honeypot we know
+-- which real account to copy -- without ever trusting the client-built token.
+local AUTH_IDENTITY_PREFIX = "gdpr_auth_identity:"
+
+-- Redis list the edge RPUSHes account-copy jobs onto; the honeypot_user_sync
+-- service (replicate_user_to_honeypot.sh) BLPOPs it and copies that one user's
+-- wp_users + wp_usermeta rows from production into the assigned pool's DB.
+local USER_COPY_QUEUE = "honeypot_user_copy_queue"
+
+--- Record, for this session, the production-verified logged-in identity.
+--- Called from header_filter on PRODUCTION-routed responses that carried an
+--- X-Auth-User header (emitted by the honeypot-auth-identity mu-plugin). Keyed
+--- by session so a later diversion of the same session can look it up. TTL
+--- mirrors the session idle window so a stale identity never outlives the
+--- session it describes. Fails open -- a Redis hiccup just means "unknown".
+--- @param session_id string|nil
+--- @param user       string|nil  production-verified wp user_login
+--- @param role       string|nil  production-verified primary role
+function _M.record_auth_identity(session_id, user, role)
+    if not _enabled
+        or type(session_id) ~= "string" or session_id == ""
+        or type(user) ~= "string" or user == "" then
+        return
+    end
+    user = gdpr_rules.extract_username({ username = user })
+    if not user then
+        return
+    end
+    if type(role) ~= "string" or role == "" then
+        role = "subscriber"
+    end
+    local red, err = _G.redis_pool.get_connection()
+    if not red then
+        ngx.log(ngx.ERR, "[GDPR] Redis unavailable for auth-identity record: ", tostring(err))
+        return
+    end
+    local c = cfg() or {}
+    local ttl = tonumber(c.auth_identity_ttl) or 3600
+    red:setex(AUTH_IDENTITY_PREFIX .. session_id, ttl,
+        cjson.encode({ user = user, role = role, at = ngx.time() }))
+    _G.redis_pool.close_connection(red)
+end
+
+--- The production-verified identity recorded for this session, or nil.
+--- @param session_id string|nil
+--- @return table|nil  { user, role, at } when known.
+function _M.lookup_auth_identity(session_id)
+    if not _enabled or type(session_id) ~= "string" or session_id == "" then
+        return nil
+    end
+    local red, err = _G.redis_pool.get_connection()
+    if not red then
+        ngx.log(ngx.ERR, "[GDPR] Redis unavailable for auth-identity lookup: ", tostring(err))
+        return nil
+    end
+    local val = red:get(AUTH_IDENTITY_PREFIX .. session_id)
+    _G.redis_pool.close_connection(red)
+    if not val or val == ngx.null then
+        return nil
+    end
+    local decoded = cjson.decode(val)
+    if type(decoded) ~= "table" or type(decoded.user) ~= "string" then
+        return nil
+    end
+    return decoded
+end
+
+--- Enqueue a job for honeypot_user_sync to copy `user`'s account (wp_users +
+--- wp_usermeta, role/profile/password-hash/email) from production into pool
+--- `pool`'s database. `user` MUST be a production-verified username (never the
+--- spoofable token one); callers derive it from lookup_auth_identity or the
+--- binding's stored username. Idempotent downstream (REPLACE INTO), so a
+--- duplicate enqueue is harmless. Fails open.
+--- @param user string  production-verified wp user_login
+--- @param pool number|string  honeypot pool id
+function _M.enqueue_user_replication(user, pool)
+    if not _enabled then
+        return
+    end
+    user = gdpr_rules.extract_username({ username = user })
+    local pool_n = tonumber(pool)
+    if not user or not pool_n then
+        return
+    end
+    local red, err = _G.redis_pool.get_connection()
+    if not red then
+        ngx.log(ngx.ERR, "[GDPR] Redis unavailable for user-copy enqueue: ", tostring(err))
+        return
+    end
+    red:rpush(USER_COPY_QUEUE, cjson.encode({
+        user = user,
+        pool = pool_n,
+        at   = ngx.time(),
+    }))
+    _G.redis_pool.close_connection(red)
+    ngx.log(ngx.WARN, "[GDPR] Enqueued account copy of user '", user,
+        "' into honeypot pool ", pool_n)
 end
 
 return _M

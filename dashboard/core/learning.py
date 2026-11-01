@@ -459,6 +459,11 @@ PAGE_GUIDES: dict[str, PageGuide] = {
         "hashes it. Only the signature leaves the proxy, and the same browser from the same size reproduces "
         "the same signature — that is how a returning visitor is re-recognised without storing anything about them.",
     ),
+    "account_persistence": PageGuide(
+        "Step-by-step proof that a logged-in adversary keeps their own account — role, profile, the lot — when the edge diverts them to a honeypot pool, with a PDF export.",
+        "Press 'Run step-by-step test' with the edge up; watch step 2 derive the same signature with and without the username, then read steps 3–6.",
+        "Diversion must not tip the adversary off. The username rides the gdpr_token as metadata only (step 2 proves live it never changes the signature), while the account copy is keyed off production's own X-Auth-User — the authoritative, non-spoofable identity — so a client cannot name someone else's account to have it copied into a honeypot it controls. A worker copies that one account into the pool and a secret-gated plugin logs them straight back in, exactly as they were.",
+    ),
     "log_search": PageGuide(
         "Forensic search across raw logs from every workload.",
         "Search for the CVE ID of a pattern you just ran.",

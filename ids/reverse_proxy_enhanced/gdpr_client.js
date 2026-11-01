@@ -86,6 +86,27 @@
     return { s: screen.width + "x" + screen.height };
   }
 
+  // The logged-in WordPress username, if the page says the visitor is logged
+  // in. WordPress's auth cookies are HttpOnly (JS cannot read them), so the
+  // honeypot-auth-identity mu-plugin publishes the current user's login name in
+  // a <meta name="gdpr-user"> tag that only renders for a logged-in user. This
+  // is NOT a browser characteristic and is NEVER folded into the signed screen
+  // size: it rides in the token as a separate "u" key purely so the server can
+  // LABEL a honeypot binding with who was logged in. The server strips it before
+  // computing the signature (gdpr_rules.IDENTITY_KEYS), so the signature is
+  // identical logged-in or out, and the server treats this value as spoofable --
+  // the authoritative identity comes from production's own X-Auth-User header.
+  function collectUsername() {
+    try {
+      var m = document.querySelector('meta[name="gdpr-user"]');
+      if (!m) return null;
+      var u = (m.getAttribute("content") || "").trim();
+      return u !== "" ? u : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   // --- crypto ---------------------------------------------------------------
 
   function importPublicKey(spkiB64) {
@@ -102,6 +123,8 @@
     if (!publicKey) return Promise.reject(new Error("no public key"));
     var payload = collectCharacteristics();
     payload.t = Math.floor(Date.now() / 1000); // fresh timestamp each time
+    var u = collectUsername();                  // logged-in username, if any
+    if (u) payload.u = u;                        // metadata only -- not signed
     var data = new TextEncoder().encode(JSON.stringify(payload));
     return window.crypto.subtle
       .encrypt({ name: "RSA-OAEP" }, publicKey, data)

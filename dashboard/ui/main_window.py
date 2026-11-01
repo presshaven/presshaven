@@ -43,6 +43,7 @@ from ui.page_targeted_access import TargetedAccessPage
 from ui.page_wp_update import WpUpdatePage
 from ui.page_pattern_database import PatternDatabasePage
 from ui.page_signature_sim import SignatureSimPage
+from ui.page_account_persistence import AccountPersistencePage
 from ui.page_detection import DetectionPage
 from ui.page_honeypot_targets import HoneypotTargetsPage
 from ui.page_whitelist import WhitelistPage
@@ -87,7 +88,7 @@ _NOTIFY_ON_STATUSES = {"unhealthy", "exited_bad"}
 
 PAGES = [
     "overview", "live_events", "pipeline", "sessions", "suricata", "detection", "whitelist", "honeypot_targets", "container_firewall", "pool_scaling", "services", "health", "resources", "certificates", "redis", "backups",
-    "kibana", "patterns", "pattern_database", "signature_sim", "pool_test", "breach_audit", "log_search", "extras", "wp_studio", "wp_update", "targeted_access", "settings", "learn",
+    "kibana", "patterns", "pattern_database", "signature_sim", "account_persistence", "pool_test", "breach_audit", "log_search", "extras", "wp_studio", "wp_update", "targeted_access", "settings", "learn",
 ]
 PAGE_LABELS = {
     "overview": "Overview",
@@ -110,6 +111,7 @@ PAGE_LABELS = {
     "patterns": "Attack Simulation",
     "pattern_database": "Pattern Database",
     "signature_sim": "Signature Simulation",
+    "account_persistence": "Account Persistence",
     "pool_test": "Segmentation Validation",
     "breach_audit": "Breach Validation",
     "log_search": "Forensics Analysis",
@@ -132,7 +134,7 @@ PAGE_LABELS = {
 NAV_GROUPS = [
     ("Overview", ["overview"]),
     ("Monitor", ["live_events", "health", "kibana", "pipeline", "resources", "log_search"]),
-    ("Threat Operations", ["patterns", "sessions", "suricata", "detection", "honeypot_targets", "whitelist", "container_firewall", "pattern_database", "signature_sim", "pool_scaling", "pool_test", "breach_audit", "redis"]),
+    ("Threat Operations", ["patterns", "sessions", "suricata", "detection", "honeypot_targets", "whitelist", "container_firewall", "pattern_database", "signature_sim", "account_persistence", "pool_scaling", "pool_test", "breach_audit", "redis"]),
     ("Manage", ["services", "wp_studio", "wp_update", "targeted_access", "settings", "certificates", "backups"]),
     ("Reporting", ["learn", "extras"]),
 ]
@@ -149,7 +151,7 @@ NAV_GROUPS = [
 # export) are not needed day to day, so they move into overflow.
 NAV_OVERFLOW = {
     "Monitor": ["pipeline", "resources", "log_search"],
-    "Threat Operations": ["pattern_database", "signature_sim", "pool_scaling", "pool_test", "breach_audit", "redis"],
+    "Threat Operations": ["pattern_database", "signature_sim", "account_persistence", "pool_scaling", "pool_test", "breach_audit", "redis"],
     "Manage": ["certificates", "backups"],
     "Reporting": ["learn", "extras"],
 }
@@ -346,6 +348,7 @@ class MainWindow(QMainWindow):
         # graphs so its resource impact is visible.
         self.patterns_page.pattern_ran.connect(self.resources_page.add_pattern_marker)
         self.signature_sim_page = SignatureSimPage(state)
+        self.account_persistence_page = AccountPersistencePage(state)
         self.pool_test_page = PoolTestPage(state)
         self.breach_audit_page = BreachAuditPage(state)
         self.log_search_page = LogSearchPage(state)
@@ -382,6 +385,7 @@ class MainWindow(QMainWindow):
             ("patterns", self.patterns_page),
             ("pattern_database", self.pattern_database_page),
             ("signature_sim", self.signature_sim_page),
+            ("account_persistence", self.account_persistence_page),
             ("pool_test", self.pool_test_page),
             ("breach_audit", self.breach_audit_page),
             ("log_search", self.log_search_page),
