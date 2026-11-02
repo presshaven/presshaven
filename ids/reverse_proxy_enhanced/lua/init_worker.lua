@@ -78,6 +78,21 @@ local function init_worker()
                     -- Production instance – uses root path (WordPress returns 200-399).
                     health_check.perform_health_check("production_backend", "http://production_eshop")
 
+                    -- Refresh the ready-pool list straight from Redis before
+                    -- probing. current_pool_ids() otherwise reads the shared-dict
+                    -- mirror, which the 5 s refresh timer above only catches up
+                    -- to every 5 s -- so a pool pool_manager destroyed mid-pass
+                    -- (e.g. the scale-down right after a Segmentation Validation
+                    -- run) lingered in that mirror and got probed once after its
+                    -- honeypot_eshop_N container was already gone, logging an
+                    -- alarming but meaningless "[HEALTH] ... check failed:
+                    -- connection refused" WARN for a pool that no longer exists.
+                    -- destroy() SREMs the pool from Redis' ready set first, so a
+                    -- fresh read here never includes it. (Falls back to the
+                    -- mirror on a Redis error -- refresh_pool_list leaves the
+                    -- dict untouched and returns false.)
+                    if pr_ok then pcall(pool_router_mod.refresh_pool_list) end
+
                     -- Each honeypot pool instance checked independently so that a
                     -- single unhealthy pool does not affect the health status of others.
                     for _, i in ipairs(current_pool_ids()) do
