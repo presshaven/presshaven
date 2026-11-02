@@ -51,6 +51,7 @@ import docker
 import redis
 
 import pool_logic as pl
+import state_export
 
 READY_KEY = "honeypot_pool:ready"
 FREE_KEY = "honeypot_pool:free"
@@ -225,6 +226,11 @@ def env_required(name: str) -> str:
 
 
 class Manager:
+    # A disabled no-op exporter by default, so instances built with __init__
+    # bypassed (the unit tests) still have one; __init__ replaces it with the
+    # real, possibly-enabled exporter.
+    exporter = state_export.StateExporter(None)
+
     def __init__(self) -> None:
         self.docker = docker.from_env()
         self.redis = redis.Redis(
@@ -251,6 +257,14 @@ class Manager:
         self.health: dict[int, bool] = {}     # last published health per ready pool
         self._local = threading.local()    # per build thread: phase timings
         self._template_lock = threading.Lock()   # one template (re)build at a time
+        # Push the live pool view + latency events to the edge log pipeline as
+        # JSONL for the SIEM (honeypot-pool_state-* / honeypot-pool_events-*).
+        # A no-op unless POOL_STATE_EXPORT_DIR is set; never raises into the
+        # reconcile loop. See state_export.py and vector/vector.yaml.
+        self.exporter = state_export.StateExporter(
+            os.environ.get("POOL_STATE_EXPORT_DIR"),
+            float(os.environ.get("POOL_STATE_SNAPSHOT_SECONDS", "30") or 30),
+            log=log)
 
     # ---- discovery -------------------------------------------------------
 
@@ -355,12 +369,15 @@ class Manager:
     def event(self, kind: str, **fields) -> None:
         """Append one event to the log clients (the dashboard's pool test
         report) read back for latency figures. Never fails the caller."""
+        payload = {"type": kind, "at": round(time.time(), 3), **fields}
         try:
-            self.redis.rpush(EVENTS_KEY, json.dumps({"type": kind, "at": round(time.time(), 3),
-                                                     **fields}))
+            self.redis.rpush(EVENTS_KEY, json.dumps(payload))
             self.redis.ltrim(EVENTS_KEY, -EVENTS_MAX, -1)
         except Exception as e:  # noqa: BLE001
             log(f"event log write failed: {e}")
+        # Mirror the same event to the SIEM feed (honeypot-pool_events-*), so a
+        # build's duration / a hand-off's wait time is queryable as latency.
+        self.exporter.event(payload)
 
     def _phase(self, name: str, started: float) -> None:
         phases = getattr(self._local, "phases", None)
@@ -1363,6 +1380,7 @@ class Manager:
             "parallel": PARALLEL_BUILDS, "idle_timeout": IDLE_TIMEOUT_S,
             "capped": reason}), ex=int(POLL_SECONDS * 6))
         self.set_capped(reason)
+        self._export_state(pools, ready, free, waiting, room, reason)
         if reason:
             # The resource limit is reached: the router now assigns every new
             # session round-robin for good. Sessions already waiting keep their
@@ -1390,6 +1408,38 @@ class Manager:
             taken.add(n)
             self.start_build(n, "waiting session" if i < for_waiting
                              else ("reserve" if spares > SPARES else "spare"))
+
+    def _export_state(self, pools, ready, free, waiting, room, reason) -> None:
+        """Push one pool-state snapshot to the SIEM feed (throttled inside the
+        exporter). A no-op unless POOL_STATE_EXPORT_DIR is set, and it never
+        raises -- shipping state must not break the reconcile loop."""
+        if not self.exporter.enabled:
+            return
+        try:
+            building = len(self.build_started)
+            capped = bool(reason)
+            state = ("capped" if capped else "scaling up" if building
+                     else "sessions waiting" if waiting else "steady")
+            try:
+                mem, load1, cpus, disk = self.host_stats()
+            except Exception:  # noqa: BLE001 -- ship the pool view without host figures
+                mem = load1 = disk = cpus = None
+            self.exporter.snapshot({
+                "manager_alive": True,
+                "pools": len(pools), "ready": len(ready), "free": free,
+                "waiting": waiting, "building": building, "room": room,
+                "spares": max(SPARES, self.reserve()),
+                "max_pools": MAX_POOLS, "capped": capped, "capped_reason": reason or "",
+                "state": state,
+                "host_mem_available_mb": round(mem, 1) if mem is not None else None,
+                "host_load1": round(load1, 2) if load1 is not None else None,
+                "host_cpus": cpus,
+                "host_free_disk_gb": round(disk, 1) if disk is not None else None,
+                "mem_per_pool_mb": POOL_MEM_MB, "cpus_per_pool": POOL_CPUS,
+                "max_memory_mb": MAX_MEMORY_MB, "max_cpus": MAX_CPUS,
+                "parallel": PARALLEL_BUILDS, "idle_timeout": IDLE_TIMEOUT_S})
+        except Exception as e:  # noqa: BLE001
+            log(f"pool state export failed: {e}")
 
     def run(self) -> None:
         log(f"started (project {PROJECT}, mode {MODE}, spares {SPARES}, max pools {MAX_POOLS}, "

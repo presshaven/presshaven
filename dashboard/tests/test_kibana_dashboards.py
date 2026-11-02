@@ -192,6 +192,184 @@ class InfraLogsTests(unittest.TestCase):
                         self.assertIn(field.removesuffix(".keyword"), self.PIPELINE_FIELDS)
 
 
+class PipelineHealthTests(unittest.TestCase):
+    """The Pipeline & Host Health dashboard visualizes Vector's own
+    internal_metrics and the edge host_metrics (flattened to log events by
+    metric_to_log). It must stay wired like every other dashboard and only
+    aggregate on the fields metric_to_log + the edge tag transforms produce."""
+
+    # metric_to_log puts the series name in `name`, the value under
+    # `counter.value` (counters) or `gauge.value` (gauges), labels under
+    # `tags.*`; the edge tag transforms add log_type + vector_role.
+    PIPELINE_FIELDS = {"name", "counter.value", "gauge.value", "vector_role",
+                       "log_type", "timestamp"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bd = _load_builder()
+
+    def test_dashboard_exists_and_wired(self):
+        self.assertIn("dashboard-pipeline-health", self.bd.DASHBOARD_IDS)
+
+    def test_edge_shipper_tags_the_metric_types(self):
+        edge = (REPO_ROOT / "ids/vector/vector.yaml").read_text(encoding="utf-8")
+        for field in ('.log_type = "vector_metrics"', '.log_type = "host_metrics"',
+                      '.vector_role = '):
+            with self.subTest(field=field):
+                self.assertIn(field, edge)
+
+    def test_panels_scope_to_a_metric_log_type(self):
+        for vid, body in self.bd.VISUALIZATIONS + self.bd.SEARCHES:
+            if not (vid.startswith("viz-pipeline-") or vid.startswith("viz-host-")
+                    or vid == "search-metrics-feed"):
+                continue
+            if vid == "viz-pipeline-guide":  # a markdown note has no query
+                continue
+            src = json.loads(body["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"])
+            query = src["query"]["query"]
+            with self.subTest(viz=vid):
+                self.assertTrue(
+                    '"vector_metrics"' in query or '"host_metrics"' in query,
+                    f"{vid} does not scope to a metric log_type: {query!r}")
+
+    def test_panels_only_use_metric_fields(self):
+        for vid, body in self.bd.VISUALIZATIONS:
+            if not (vid.startswith("viz-pipeline-") or vid.startswith("viz-host-")):
+                continue
+            for agg in json.loads(body["attributes"]["visState"])["aggs"]:
+                field = agg["params"].get("field")
+                if field:
+                    with self.subTest(viz=vid, field=field):
+                        self.assertIn(field.removesuffix(".keyword"), self.PIPELINE_FIELDS)
+
+
+class SuricataEnrichmentTests(unittest.TestCase):
+    """The parsed-Suricata panels added to the IDS Alerts dashboard surface the
+    rich eve-log sub-fields (SID, action, community_id) Suricata actually emits
+    for an alert event (suricata_config/suricata.yaml enables community-id)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bd = _load_builder()
+        cls.vizzes = dict(cls.bd.VISUALIZATIONS)
+
+    def test_new_panels_are_on_the_ids_dashboard(self):
+        body = dict(self.bd.DASHBOARDS)["dashboard-ids-alerts"]
+        referenced = {r["id"] for r in body["references"]
+                      if r["type"] == "visualization"}
+        for vid in ("viz-ids-top-sids", "viz-ids-flows"):
+            with self.subTest(viz=vid):
+                self.assertIn(vid, referenced)
+
+    def test_new_panels_scope_to_suricata_alerts(self):
+        for vid in ("viz-ids-top-sids", "viz-ids-flows"):
+            body = self.vizzes[vid]
+            src = json.loads(body["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"])
+            query = src["query"]["query"]
+            with self.subTest(viz=vid):
+                self.assertIn('log_type:"suricata"', query)
+                self.assertIn('event_type:"alert"', query)
+
+    def test_community_id_enabled_in_suricata_config(self):
+        cfg = (REPO_ROOT / "ids/suricata_config/suricata.yaml").read_text(encoding="utf-8")
+        self.assertIn("community-id: true", cfg)
+
+
+class PoolCapacityTests(unittest.TestCase):
+    """The Pool & Capacity dashboard visualizes the pool_manager's live state
+    (honeypot-pool_state-*) and its build/hand-off latency log
+    (honeypot-pool_events-*), pushed as JSONL that the edge Vector tails. It
+    must stay wired and only aggregate on fields the exporter actually writes."""
+
+    # Fields state_export.py puts on each snapshot / event line and the edge
+    # tag transforms add. Kept in sync with manager._export_state + event().
+    POOL_FIELDS = {"pools", "ready", "free", "waiting", "building",
+                   "host_load1", "host_mem_available_mb", "state",
+                   "seconds", "waited", "type", "log_type", "timestamp"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bd = _load_builder()
+        cls.vizzes = dict(cls.bd.VISUALIZATIONS)
+
+    def test_dashboard_exists_and_wired(self):
+        self.assertIn("dashboard-pool-capacity", self.bd.DASHBOARD_IDS)
+
+    def test_edge_tags_the_pool_log_types(self):
+        edge = (REPO_ROOT / "ids/vector/vector.yaml").read_text(encoding="utf-8")
+        for field in ('.log_type = "pool_state"', '.log_type = "pool_events"'):
+            with self.subTest(field=field):
+                self.assertIn(field, edge)
+
+    def test_manager_exports_state_and_events(self):
+        mgr = (REPO_ROOT / "ids/images/pool_manager/manager.py").read_text(encoding="utf-8")
+        self.assertIn("import state_export", mgr)
+        self.assertIn("self.exporter.snapshot", mgr)
+        self.assertIn("self.exporter.event", mgr)
+
+    def test_panels_scope_to_a_pool_log_type(self):
+        for vid, body in self.bd.VISUALIZATIONS + self.bd.SEARCHES:
+            if not (vid.startswith("viz-pool-") or vid == "search-pool-events"):
+                continue
+            if vid == "viz-pool-guide":  # a markdown note has no query
+                continue
+            src = json.loads(body["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"])
+            query = src["query"]["query"]
+            with self.subTest(viz=vid):
+                self.assertTrue(
+                    '"pool_state"' in query or '"pool_events"' in query,
+                    f"{vid} does not scope to a pool log_type: {query!r}")
+
+    def test_panels_only_use_pool_fields(self):
+        for vid, body in self.bd.VISUALIZATIONS:
+            if not vid.startswith("viz-pool-"):
+                continue
+            for agg in json.loads(body["attributes"]["visState"])["aggs"]:
+                field = agg["params"].get("field")
+                if field:
+                    with self.subTest(viz=vid, field=field):
+                        self.assertIn(field.removesuffix(".keyword"), self.POOL_FIELDS)
+
+
+class PatternCoverageTests(unittest.TestCase):
+    """The Detection Coverage dashboard visualizes the enabled-pattern snapshot
+    the dashboard app pushes into honeypot-patterns (core/pattern_export.py). It
+    must stay wired and only aggregate on fields pattern_export writes."""
+
+    # Fields core.pattern_export.pattern_documents puts on each pattern doc.
+    PATTERN_FIELDS = {"enabled", "default_enabled", "toggled", "suricata_sid_count",
+                      "severity", "category_label", "kind_label", "component",
+                      "surface", "log_type", "timestamp"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bd = _load_builder()
+
+    def test_dashboard_exists_and_wired(self):
+        self.assertIn("dashboard-pattern-coverage", self.bd.DASHBOARD_IDS)
+
+    def test_panels_scope_to_the_patterns_log_type(self):
+        for vid, body in self.bd.VISUALIZATIONS + self.bd.SEARCHES:
+            if not (vid.startswith("viz-patterns-") or vid == "search-patterns"):
+                continue
+            if vid == "viz-patterns-guide":  # a markdown note has no query
+                continue
+            src = json.loads(body["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"])
+            query = src["query"]["query"]
+            with self.subTest(viz=vid):
+                self.assertIn('log_type:"patterns"', query)
+
+    def test_panels_only_use_pattern_fields(self):
+        for vid, body in self.bd.VISUALIZATIONS:
+            if not vid.startswith("viz-patterns-"):
+                continue
+            for agg in json.loads(body["attributes"]["visState"])["aggs"]:
+                field = agg["params"].get("field")
+                if field:
+                    with self.subTest(viz=vid, field=field):
+                        self.assertIn(field.removesuffix(".keyword"), self.PATTERN_FIELDS)
+
+
 class DecisionLogFieldTests(unittest.TestCase):
     """nginx's security log format and Vector's parser must agree on the
     routing-decision fields the Threat Decisions dashboard is built on."""

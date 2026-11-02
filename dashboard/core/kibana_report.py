@@ -101,6 +101,47 @@ PAGE_NOTES: dict[str, str] = {
         "a crash loop or an error burst. The reverse proxy's own logs ship as files, not "
         "through Docker, so it is not among the containers here."
     ),
+    "/app/dashboards#/view/dashboard-pipeline-health": (
+        "The observability pipeline's own health and the edge host's resources -- the same "
+        "<code>honeypot-vector_metrics-*</code> / <code>honeypot-host_metrics-*</code> data the "
+        "dashboard app's Pipeline page watches. The top row is Vector's <code>internal_metrics</code> "
+        "for both shippers, told apart by <b>vector_role</b> (<i>edge_shipper</i> vs "
+        "<i>siem_aggregator</i>): <b>Pipeline Throughput</b> is events flowing in and out, "
+        "<b>Elasticsearch Sink Buffer Fill</b> is how full the send buffer is (sustained growth "
+        "means backpressure), and <b>Pipeline Errors &amp; Discards</b> lists any errored or "
+        "dropped events. The bottom row is the edge host's <code>host_metrics</code>: <b>CPU "
+        "Load</b>, <b>Memory</b>, <b>Network Throughput</b> and <b>Filesystem Free Space</b>. "
+        "Series split by metric <b>name</b>, so each is self-labelling; <b>Raw Metric Samples</b> "
+        "is the underlying feed and shows the exact metric names shipped. Empty until the "
+        "metrics pipeline is deployed."
+    ),
+    "/app/dashboards#/view/dashboard-pool-capacity": (
+        "How the honeypot pool fleet is scaling and how fast, from the same state the "
+        "dashboard app's Pool page shows -- pushed into <code>honeypot-pool_state-*</code> "
+        "(a live snapshot each reconcile pass) and <code>honeypot-pool_events-*</code> (the "
+        "build / hand-off latency log). <b>Pool Fleet Over Time</b> tracks ready, free, "
+        "waiting and building pools together: <i>waiting</i> above zero means users are queued "
+        "for a pool of their own, and <b>Peak Sessions Waiting</b> is the worst of it. "
+        "<b>Pool Build Latency</b> is how long a new pool takes to build and <b>Hand-off "
+        "Wait</b> how long a queued session waited for one -- the two latency figures that "
+        "decide whether a user ever sees a delay. <b>Time in Each Pool State</b> is the mix "
+        "of healthy / scaling / capped passes, <b>Edge Host Load</b> and <b>Memory</b> are "
+        "the host figures the manager reads, and the <b>Lifecycle Event Feed</b> is the raw "
+        "log behind it all. Empty until the edge stack is redeployed."
+    ),
+    "/app/dashboards#/view/dashboard-pattern-coverage": (
+        "Which attack patterns the honeypot currently has enabled -- a snapshot of the "
+        "dashboard app's Pattern Database (its Lua and Suricata detection), pushed into "
+        "<code>honeypot-patterns</code> whenever this page is opened or the <i>Send Patterns "
+        "to SIEM</i> button is pressed. <b>Enabled vs Disabled</b> is the headline split and "
+        "<b>Patterns Enabled</b> / <b>Suricata SIDs Covered</b> quantify the active surface; "
+        "<b>By Category</b>, <b>By Severity</b> and <b>By Kind</b> show its shape. <b>Toggled "
+        "Away From Default</b> flags patterns switched on or off relative to the catalogue "
+        "default (CVE patterns ship off, generic attacks on), so a deliberate change stands "
+        "out. The <b>Enabled Pattern List</b> is the full feed. This is configuration, not "
+        "traffic -- it shows what the honeypot is set up to catch, not what it caught. Empty "
+        "until the dashboard pushes a snapshot."
+    ),
     "/app/management/insightsAndAlerting/triggersActions/rules": (
         "The active Kibana alerting rules seeded for the honeypot "
         "(Elasticsearch-query rules over <code>honeypot-*</code>): a session "

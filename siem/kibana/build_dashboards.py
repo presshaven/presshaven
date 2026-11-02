@@ -280,6 +280,35 @@ _DOCKER_Q = 'log_type:"docker"'
 _REDIS_Q = 'log_type:"redis"'
 _NGINX_ERR_Q = 'log_type:"nginx_error"'
 
+# Pipeline & host self-metrics. Both Vector processes' internal_metrics and the
+# edge host_metrics are flattened to log events by metric_to_log (see
+# ids/vector/vector.yaml), so the metric's series name lands in `name`, its
+# value under `counter.value` (cumulative counters) or `gauge.value`
+# (point-in-time gauges), and its labels under `tags.*`. The panels below match
+# `name` with trailing-substring wildcards and split every series by
+# `name.keyword`, so they stay correct whether or not Vector prefixes the metric
+# namespace onto the name (e.g. `vector_component_sent_events_total` vs
+# `component_sent_events_total`) -- the series label shows whichever it is.
+_METRICS_VEC_Q = 'log_type:"vector_metrics"'
+_METRICS_HOST_Q = 'log_type:"host_metrics"'
+
+# Pool capacity. pool_manager pushes its live pool view (honeypot-pool_state-*:
+# ready/free/waiting/building counts, the one-word state, host headroom) and
+# its latency event log (honeypot-pool_events-*: builds with durations,
+# hand-offs with wait times) as JSONL that the edge Vector tails -- see
+# ids/images/pool_manager/state_export.py and ids/vector/vector.yaml. It is the
+# same data the dashboard app's Pool page shows.
+_POOL_STATE_Q = 'log_type:"pool_state"'
+_POOL_EVENTS_Q = 'log_type:"pool_events"'
+
+# The detection-pattern catalogue + the user's enable/disable overlay live only
+# in the dashboard app (patterns/patterns.json + registry.json, not shipped by
+# Vector). The dashboard pushes a snapshot of the effective catalogue -- one doc
+# per pattern with its enabled state -- into honeypot-patterns (see
+# dashboard/core/pattern_export.py). Each push fully replaces it, so the index
+# always mirrors what detection the honeypot currently has switched on.
+_PATTERNS_Q = 'log_type:"patterns"'
+
 # Each dashboard answers a different question and uses different panel
 # types, so they no longer read as copies of each other (the old four were
 # all "count metric + count-over-time + pies + top-N tables"):
@@ -345,6 +374,23 @@ VISUALIZATIONS = [
           _terms_agg("http.url.keyword", agg_id="2", size=15, schema="bucket", label="URL"),
           _terms_agg("http.http_method.keyword", agg_id="4", size=6, schema="bucket", label="Method")],
          query=f'{_IDS_Q} and http.url:*', params_extra=_TABLE),
+    # The rule that fired, by Suricata's own ids: alert.signature_id (SID) with
+    # its revision and action (allowed/blocked), the raw eve fields the PyQt
+    # Network IDS page shows per line -- previously only the signature *text*
+    # was charted (Top Signatures above).
+    _viz("viz-ids-top-sids", "Top Rule SIDs (signature_id)", "table",
+         [_count_metric_agg("Alerts"),
+          _metric_agg("min", "alert.severity", "4", "Worst severity"),
+          _terms_agg("alert.signature_id", agg_id="2", size=15, schema="bucket", label="SID"),
+          _terms_agg("alert.signature.keyword", agg_id="3", size=1, schema="bucket", label="Signature"),
+          _terms_agg("alert.action.keyword", agg_id="5", size=2, schema="bucket", label="Action")],
+         query=_IDS_Q, params_extra=_TABLE),
+    # community_id (eve-log community-id: true in suricata.yaml) is the
+    # flow-correlation hash shared with other tools -- its cardinality is how
+    # many distinct network flows the alerts span, not just how many alerts.
+    _viz("viz-ids-flows", "Distinct Network Flows", "metric",
+         [_metric_agg("cardinality", "community_id.keyword", "1", "Flows (community_id)")],
+         query=_IDS_Q),
 
     # -- Web Traffic ---------------------------------------------------------
     _markdown("viz-web-guide", "About: Web Traffic",
@@ -664,6 +710,148 @@ VISUALIZATIONS = [
     _viz("viz-infra-streams", "Container Output: stdout vs stderr", "pie",
          [_count_metric_agg(), _terms_agg("stream.keyword", size=2, label="Stream")],
          query=_DOCKER_Q, params_extra=_PIE),
+
+    # -- Pipeline & Host Health (self-metrics) --------------------------------
+    _markdown("viz-pipeline-guide", "About: Pipeline & Host Health",
+              "**Is the observability pipeline itself healthy, and is the edge host coping?** "
+              "The top row is Vector's own `internal_metrics` for *both* shippers, told apart by "
+              "`vector_role` (`edge_shipper` vs `siem_aggregator`): events flowing through, the "
+              "Elasticsearch sink's buffer fill, and any errored/discarded events. The bottom row "
+              "is the edge host's `host_metrics` (CPU load, memory, disk, network). Series are "
+              "split by metric `name`, so each line is self-labelling whatever namespace prefix "
+              "Vector uses. **No data here until the metrics pipeline is deployed** "
+              "(`internal_metrics`/`host_metrics` sources were added to `ids/vector/vector.yaml`); "
+              "it is the same `honeypot-vector_metrics-*` / `honeypot-host_metrics-*` data the "
+              "Pipeline page of the dashboard app watches."),
+    _viz("viz-pipeline-throughput", "Pipeline Throughput (events in/out)", "line",
+         [_metric_agg("max", "counter.value", "1", "Events (cumulative)"),
+          _date_histogram_agg(),
+          _terms_agg("name.keyword", agg_id="3", size=8, schema="group", label="Metric")],
+         query=f'{_METRICS_VEC_Q} and (name:*received_events_total or name:*sent_events_total)',
+         params_extra=_xy_params("line", [("1", "Events")], y_title="Events (cumulative)")),
+    _viz("viz-pipeline-errors", "Pipeline Errors & Discards", "table",
+         [_metric_agg("max", "counter.value", "1", "Count (cumulative)"),
+          _terms_agg("vector_role.keyword", agg_id="3", size=2, schema="bucket", label="Vector role"),
+          _terms_agg("name.keyword", agg_id="2", size=15, schema="bucket", label="Metric")],
+         query=f'{_METRICS_VEC_Q} and (name:*errors_total or name:*discarded_events_total)',
+         params_extra=_TABLE),
+    _viz("viz-pipeline-buffer", "Elasticsearch Sink Buffer Fill", "line",
+         [_metric_agg("max", "gauge.value", "1", "Buffered events"),
+          _date_histogram_agg(),
+          _terms_agg("vector_role.keyword", agg_id="3", size=2, schema="group", label="Vector role")],
+         query=f'{_METRICS_VEC_Q} and name:*buffer_events',
+         params_extra=_xy_params("line", [("1", "Buffered events")], y_title="Events in buffer")),
+    _viz("viz-host-load", "Host CPU Load (1 min)", "line",
+         [_metric_agg("avg", "gauge.value", "1", "Load (1m)"), _date_histogram_agg()],
+         query=f'{_METRICS_HOST_Q} and name:*load1',
+         params_extra=_xy_params("line", [("1", "Load avg (1m)")], y_title="Load")),
+    _viz("viz-host-memory", "Host Memory (bytes)", "area",
+         [_metric_agg("avg", "gauge.value", "1", "Bytes"), _date_histogram_agg(),
+          _terms_agg("name.keyword", agg_id="3", size=4, schema="group", label="Metric")],
+         query=f'{_METRICS_HOST_Q} and (name:*memory_used_bytes or name:*memory_available_bytes '
+               'or name:*memory_total_bytes or name:*memory_free_bytes)',
+         params_extra=_xy_params("area", [("1", "Bytes")], y_title="Bytes")),
+    _viz("viz-host-network", "Host Network Throughput (cumulative bytes)", "line",
+         [_metric_agg("max", "counter.value", "1", "Bytes (cumulative)"), _date_histogram_agg(),
+          _terms_agg("name.keyword", agg_id="3", size=4, schema="group", label="Direction")],
+         query=f'{_METRICS_HOST_Q} and (name:*network_receive_bytes_total '
+               'or name:*network_transmit_bytes_total)',
+         params_extra=_xy_params("line", [("1", "Bytes (cumulative)")], y_title="Bytes")),
+    _viz("viz-host-disk", "Host Filesystem Free Space (bytes)", "area",
+         [_metric_agg("avg", "gauge.value", "1", "Free bytes"), _date_histogram_agg()],
+         query=f'{_METRICS_HOST_Q} and name:*filesystem_free_bytes',
+         params_extra=_xy_params("area", [("1", "Free bytes")], y_title="Bytes")),
+
+    # -- Pool & Capacity ------------------------------------------------------
+    _markdown("viz-pool-guide", "About: Pool & Capacity",
+              "**How the honeypot pool fleet is scaling, and how fast.** The pool_manager "
+              "scales honeypot pools with the number of user sessions; it pushes its live view "
+              "(`honeypot-pool_state-*`) and its build/hand-off latency log "
+              "(`honeypot-pool_events-*`) into the SIEM. **Pool Fleet Over Time** tracks "
+              "ready/free/waiting/building together -- `waiting` above zero means users are "
+              "queued for a pool of their own; **Pool Build Latency** and **Hand-off Wait** are "
+              "how long a new pool takes to build and how long a queued session waited for one. "
+              "This is the same state the dashboard app's Pool page shows, queryable without the "
+              "app. **Empty until the edge stack is redeployed** (pool_manager only starts "
+              "writing once the shared log volume + exporter are in place)."),
+    _viz("viz-pool-fleet-over-time", "Pool Fleet Over Time", "line",
+         [_metric_agg("max", "ready", "1", "Ready"), _date_histogram_agg(),
+          _metric_agg("max", "free", "3", "Free"),
+          _metric_agg("max", "waiting", "4", "Waiting"),
+          _metric_agg("max", "building", "5", "Building"),
+          _metric_agg("max", "pools", "6", "Total pools")],
+         query=_POOL_STATE_Q,
+         params_extra=_xy_params("line", [("1", "Ready"), ("3", "Free"), ("4", "Waiting"),
+                                          ("5", "Building"), ("6", "Total pools")],
+                                 y_title="Pools")),
+    _viz("viz-pool-state-breakdown", "Time in Each Pool State", "pie",
+         [_count_metric_agg(), _terms_agg("state.keyword", size=6, label="State")],
+         query=_POOL_STATE_Q, params_extra=_PIE),
+    _viz("viz-pool-peak", "Peak Pools in Use", "metric",
+         [_metric_agg("max", "pools", "1", "Peak pools")], query=_POOL_STATE_Q),
+    _viz("viz-pool-peak-waiting", "Peak Sessions Waiting", "metric",
+         [_metric_agg("max", "waiting", "1", "Peak waiting")], query=_POOL_STATE_Q),
+    _viz("viz-pool-host-load", "Edge Host Load (1 min) at the Manager", "line",
+         [_metric_agg("avg", "host_load1", "1", "Load (1m)"), _date_histogram_agg()],
+         query=_POOL_STATE_Q,
+         params_extra=_xy_params("line", [("1", "Load (1m)")], y_title="Load")),
+    _viz("viz-pool-host-mem", "Edge Host Memory Available (MB)", "area",
+         [_metric_agg("avg", "host_mem_available_mb", "1", "MB available"), _date_histogram_agg()],
+         query=_POOL_STATE_Q,
+         params_extra=_xy_params("area", [("1", "MB available")], y_title="MB")),
+    _viz("viz-pool-build-latency", "Pool Build Latency (seconds)", "line",
+         [_metric_agg("avg", "seconds", "1", "Avg build seconds"), _date_histogram_agg(),
+          _metric_agg("max", "seconds", "3", "Slowest build")],
+         query=f'{_POOL_EVENTS_Q} and type:"build"',
+         params_extra=_xy_params("line", [("1", "Avg build seconds"), ("3", "Slowest build")],
+                                 y_title="Seconds")),
+    _viz("viz-pool-handoff-wait", "Hand-off Wait (seconds a session queued)", "line",
+         [_metric_agg("avg", "waited", "1", "Avg wait"), _date_histogram_agg(),
+          _metric_agg("max", "waited", "3", "Longest wait")],
+         query=f'{_POOL_EVENTS_Q} and type:"handoff"',
+         params_extra=_xy_params("line", [("1", "Avg wait"), ("3", "Longest wait")],
+                                 y_title="Seconds")),
+    _viz("viz-pool-event-types", "Pool Lifecycle Events by Type", "horizontal_bar",
+         [_count_metric_agg(), _terms_agg("type.keyword", size=12, label="Event")],
+         query=_POOL_EVENTS_Q,
+         params_extra=_xy_params("horizontal_bar", [("1", "Events")], horizontal=True)),
+
+    # -- Detection Coverage (enabled patterns) --------------------------------
+    _markdown("viz-patterns-guide", "About: Detection Coverage",
+              "**Which attack patterns the honeypot currently has switched on.** The dashboard "
+              "app's Pattern Database is the catalogue of everything the reverse-proxy Lua rules "
+              "and Suricata rules *can* detect; this is a snapshot of what is **enabled** right "
+              "now, pushed here whenever you open SIEM Analytics or press *Send Patterns to "
+              "SIEM*. **Enabled vs Disabled** is the headline split; **By Category / Severity / "
+              "Kind** show the shape of the active coverage; **Toggled Away From Default** flags "
+              "patterns you have turned on or off relative to the catalogue's own default (CVE "
+              "patterns ship off, generic attacks on). The **Enabled Pattern List** is the full "
+              "feed. **Empty until the dashboard pushes a snapshot** (open this page, or use the "
+              "button, with the SIEM reachable)."),
+    _viz("viz-patterns-total", "Patterns in Catalogue", "metric",
+         [_count_metric_agg("Patterns")], query=_PATTERNS_Q),
+    _viz("viz-patterns-enabled-count", "Patterns Enabled", "metric",
+         [_count_metric_agg("Enabled")], query=f'{_PATTERNS_Q} and enabled:true'),
+    _viz("viz-patterns-suricata-sids", "Suricata SIDs Covered (enabled)", "metric",
+         [_metric_agg("sum", "suricata_sid_count", "1", "SIDs")],
+         query=f'{_PATTERNS_Q} and enabled:true'),
+    _viz("viz-patterns-enabled-split", "Enabled vs Disabled", "pie",
+         [_count_metric_agg(), _terms_agg("enabled", size=2, label="Enabled")],
+         query=_PATTERNS_Q, params_extra=_PIE),
+    _viz("viz-patterns-by-category", "Enabled Patterns by Category", "horizontal_bar",
+         [_count_metric_agg(), _terms_agg("category_label.keyword", size=15, label="Category")],
+         query=f'{_PATTERNS_Q} and enabled:true',
+         params_extra=_xy_params("horizontal_bar", [("1", "Patterns")], horizontal=True)),
+    _viz("viz-patterns-by-severity", "Enabled Patterns by Severity", "pie",
+         [_count_metric_agg(), _terms_agg("severity.keyword", size=6, label="Severity")],
+         query=f'{_PATTERNS_Q} and enabled:true', params_extra=_PIE),
+    _viz("viz-patterns-by-kind", "Enabled Patterns by Kind", "horizontal_bar",
+         [_count_metric_agg(), _terms_agg("kind_label.keyword", size=15, label="Kind")],
+         query=f'{_PATTERNS_Q} and enabled:true',
+         params_extra=_xy_params("horizontal_bar", [("1", "Patterns")], horizontal=True)),
+    _viz("viz-patterns-toggled", "Toggled Away From Default", "pie",
+         [_count_metric_agg(), _terms_agg("toggled", size=2, label="Toggled")],
+         query=_PATTERNS_Q, params_extra=_PIE),
 ]
 
 # Discover saved searches: event lists with the indicator columns already
@@ -688,6 +876,30 @@ SEARCHES = [
             "Docker, Redis and nginx-error log lines newest first -- the raw operational "
             "feed behind the Infrastructure panels, for spotting a crash loop or an error "
             "burst. Share > CSV in Discover exports it."),
+    _search("search-metrics-feed", "Pipeline & Host: Raw Metric Samples",
+            ["vector_role", "name", "kind", "namespace", "counter.value", "gauge.value", "host"],
+            'log_type:("vector_metrics" or "host_metrics")',
+            "Individual metric samples as Vector's metric_to_log flattens them: the series "
+            "`name`, whether it is a cumulative `counter.value` or point-in-time `gauge.value`, "
+            "and which Vector process (`vector_role`) or host emitted it. The ground truth "
+            "behind the Pipeline & Host Health panels -- and the quickest way to see the exact "
+            "metric names Vector is shipping."),
+    _search("search-pool-events", "Pool: Lifecycle Event Feed",
+            ["type", "pool", "session", "seconds", "waited", "ok", "healthy", "reason",
+             "state", "phases"],
+            _POOL_EVENTS_Q,
+            "Every pool lifecycle event newest first -- builds (with per-phase timings), "
+            "hand-offs (how long a session waited), health checks, scaledowns and cap/uncap "
+            "decisions. The raw log behind the Pool & Capacity latency panels; Share > CSV "
+            "in Discover exports it."),
+    _search("search-patterns", "Detection: Enabled Pattern List",
+            ["name", "severity", "category_label", "kind_label", "component", "surface",
+             "enabled", "toggled", "suricata_sid_count", "cve", "owasp", "mitre"],
+            f'{_PATTERNS_Q} and enabled:true',
+            "Every detection pattern the honeypot currently has enabled, with its category, "
+            "severity, where it fires and how many Suricata SIDs it carries -- the full "
+            "coverage list behind the Detection Coverage panels. Drop the enabled:true filter "
+            "in Discover to see disabled patterns too; Share > CSV exports it."),
 ]
 
 
@@ -748,6 +960,8 @@ DASHBOARDS = [
             ("viz-ids-top-source-ips", 28, 23, 20, 15),
             ("viz-ids-transport-proto", 0, 38, 16, 13),
             ("viz-ids-http-targets", 16, 38, 32, 13),
+            ("viz-ids-top-sids", 0, 51, 28, 15),
+            ("viz-ids-flows", 28, 51, 20, 15),
         ],
     ),
     _dashboard(
@@ -844,6 +1058,54 @@ DASHBOARDS = [
             ("viz-infra-container-table", 24, 22, 24, 15),
             ("viz-infra-streams", 0, 37, 16, 13),
             ("search-infra-feed", 16, 37, 32, 13),
+        ],
+    ),
+    _dashboard(
+        "dashboard-pipeline-health", "Honeypot: Pipeline & Host Health",
+        "The observability pipeline's own health and the edge host's resources: Vector throughput, buffer fill and errors for both shippers, plus host CPU load, memory, network and disk.",
+        [
+            ("viz-pipeline-guide", 0, 0, 48, 8),
+            ("viz-pipeline-throughput", 0, 8, 24, 15),
+            ("viz-pipeline-errors", 24, 8, 24, 15),
+            ("viz-pipeline-buffer", 0, 23, 24, 13),
+            ("viz-host-load", 24, 23, 24, 13),
+            ("viz-host-memory", 0, 36, 24, 13),
+            ("viz-host-network", 24, 36, 24, 13),
+            ("viz-host-disk", 0, 49, 16, 13),
+            ("search-metrics-feed", 16, 49, 32, 13),
+        ],
+    ),
+    _dashboard(
+        "dashboard-pool-capacity", "Honeypot: Pool & Capacity",
+        "The honeypot pool fleet's live state and how fast it scales: ready/free/waiting/building pools over time, state mix, per-session hand-off waits and per-pool build latency, plus the edge host's load and memory as the manager sees them.",
+        [
+            ("viz-pool-guide", 0, 0, 32, 8),
+            ("viz-pool-peak", 32, 0, 8, 8),
+            ("viz-pool-peak-waiting", 40, 0, 8, 8),
+            ("viz-pool-fleet-over-time", 0, 8, 32, 15),
+            ("viz-pool-state-breakdown", 32, 8, 16, 15),
+            ("viz-pool-build-latency", 0, 23, 24, 13),
+            ("viz-pool-handoff-wait", 24, 23, 24, 13),
+            ("viz-pool-host-load", 0, 36, 24, 13),
+            ("viz-pool-host-mem", 24, 36, 24, 13),
+            ("viz-pool-event-types", 0, 49, 16, 13),
+            ("search-pool-events", 16, 49, 32, 13),
+        ],
+    ),
+    _dashboard(
+        "dashboard-pattern-coverage", "Honeypot: Detection Coverage",
+        "Which attack patterns the honeypot currently has enabled: the Lua/Suricata detection the dashboard's Pattern Database has switched on, snapshotted into the SIEM -- enabled vs disabled, by category, severity and kind, which were toggled from the default, and the full enabled-pattern list.",
+        [
+            ("viz-patterns-guide", 0, 0, 24, 8),
+            ("viz-patterns-total", 24, 0, 8, 8),
+            ("viz-patterns-enabled-count", 32, 0, 8, 8),
+            ("viz-patterns-suricata-sids", 40, 0, 8, 8),
+            ("viz-patterns-enabled-split", 0, 8, 16, 15),
+            ("viz-patterns-by-severity", 16, 8, 16, 15),
+            ("viz-patterns-toggled", 32, 8, 16, 15),
+            ("viz-patterns-by-category", 0, 23, 24, 16),
+            ("viz-patterns-by-kind", 24, 23, 24, 16),
+            ("search-patterns", 0, 39, 48, 14),
         ],
     ),
 ]

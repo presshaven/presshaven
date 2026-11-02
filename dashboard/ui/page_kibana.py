@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import pattern_export as pe
 from core import shipper_health as sh
 from core.docker_ctl import target_for, targets_for
 from core.kibana_credentials import get_elastic_credentials
@@ -69,6 +70,9 @@ _BOOKMARKS = [
     ("Attack Patterns", "/app/dashboards#/view/dashboard-attack-patterns"),
     ("Threat Intelligence", "/app/dashboards#/view/dashboard-threat-intel"),
     ("Infrastructure & Ops Logs", "/app/dashboards#/view/dashboard-infra-logs"),
+    ("Pipeline & Host Health", "/app/dashboards#/view/dashboard-pipeline-health"),
+    ("Pool & Capacity", "/app/dashboards#/view/dashboard-pool-capacity"),
+    ("Detection Coverage", "/app/dashboards#/view/dashboard-pattern-coverage"),
     # The active alerting rules kibana_alerts_setup seeds (siem/kibana/
     # build_alert_rules.py) -- Stack Management's Rules list, where each
     # Honeypot rule's status (active/ok) and its fired alerts are shown.
@@ -174,6 +178,24 @@ class KibanaPage(QWidget):
             "(all shipped logs, metrics, alerts and events, and the Kibana history "
             "built from them). The indices stay and Vector keeps shipping new data.")
         toolbar.addWidget(self.clear_btn)
+
+        # The detection-pattern catalogue + the user's enable/disable overlay
+        # live only in this app (patterns/), not on the edge, so nothing ships
+        # them. This pushes a snapshot of the effective catalogue into the SIEM
+        # (core/pattern_export.py) to drive the Detection Coverage dashboard. It
+        # also fires automatically the first time this page loads (see
+        # _on_load_finished), so the coverage view is current just by opening
+        # SIEM Analytics; the button forces a refresh after toggling patterns.
+        self._pattern_jobs: set[Job] = set()
+        self._patterns_autopushed = False
+        self.patterns_btn = QPushButton("Send Patterns to SIEM")
+        self.patterns_btn.setToolTip(
+            "Push the currently enabled detection patterns (from the Pattern Database) "
+            "into Elasticsearch so the Detection Coverage dashboard reflects them. Runs "
+            "automatically when this page opens; use this after enabling or disabling "
+            "patterns to refresh the SIEM immediately.")
+        self.patterns_btn.clicked.connect(lambda: self._push_patterns(announce=True))
+        toolbar.addWidget(self.patterns_btn)
 
         toolbar_widget = QWidget()
         toolbar_widget.setLayout(toolbar)
@@ -319,6 +341,41 @@ class KibanaPage(QWidget):
         job.done.connect(finished)
         job.start()
 
+    def _push_patterns(self, *, announce: bool) -> None:
+        """Snapshot the enabled detection patterns into the SIEM. ``announce``
+        reports the outcome in a dialog (the button); the automatic push on
+        page load passes False and stays silent -- a failure there just means
+        the SIEM wasn't ready, and the button is always available to retry."""
+        self.patterns_btn.setEnabled(False)
+        if announce:
+            self.patterns_btn.setText("Sending…")
+        siem = targets_for("siem", self.state)
+        job = Job(lambda: pe.push_patterns(siem, self.state), self)
+        self._pattern_jobs.add(job)
+
+        def finished(result, error):
+            self.patterns_btn.setEnabled(True)
+            self.patterns_btn.setText("Send Patterns to SIEM")
+            self._pattern_jobs.discard(job)
+            job.deleteLater()
+            if not announce:
+                return
+            if error or result is None:
+                QMessageBox.warning(self, "Send Patterns failed", error or "no data")
+                return
+            stats, perr = result
+            if perr:
+                QMessageBox.warning(self, "Send Patterns failed", perr)
+                return
+            msg = (f"Pushed {stats['total']:,} pattern(s) to the SIEM "
+                   f"({stats['enabled']:,} enabled).")
+            if stats["errored"]:
+                msg += f"\n\n{stats['errored']:,} document(s) were rejected by Elasticsearch."
+            msg += "\n\nOpen the Detection Coverage dashboard to see it."
+            QMessageBox.information(self, "Patterns sent", msg)
+        job.done.connect(finished)
+        job.start()
+
     def _on_remember_toggled(self, checked: bool) -> None:
         self.state.kibana_remember_credentials = checked
         self.state.save()
@@ -338,6 +395,12 @@ class KibanaPage(QWidget):
         if ok:
             self.banner.setVisible(False)
             self._maybe_autologin()
+            # Kibana loaded, so the SIEM is reachable: refresh the Detection
+            # Coverage snapshot once per session, best-effort and silent (the
+            # button is there for an explicit, reported refresh).
+            if not self._patterns_autopushed:
+                self._patterns_autopushed = True
+                self._push_patterns(announce=False)
             return
 
         target = target_for("siem", self.state)

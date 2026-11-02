@@ -48,6 +48,24 @@ sources:
       - /var/log/redis/*.log
     ignore_older_secs: 86400 # 24h
 
+  # --- POOL STATE PILLAR ----------------------------------------------------
+  # The pool_manager owns the live pool registry (Redis) and a latency event
+  # log, but the SIEM's Vector shipper has no Redis client in its image and
+  # runs on the edge -- so rather than the SIEM reaching in, pool_manager
+  # pushes its own state: one JSON object per line into files on a shared
+  # volume (pool_state_logs, written by pool_manager's state_export.py, see
+  # docker-compose.yml) that these two file sources tail. This is the same
+  # pool view the dashboard app's Pool page shows, made queryable without the
+  # app running. honeypot-pool_state-* / honeypot-pool_events-*.
+  pool_state_in:
+    type: file
+    include:
+      - /var/log/pool_state/pool_state.jsonl
+  pool_events_in:
+    type: file
+    include:
+      - /var/log/pool_state/pool_events.jsonl
+
   # --- METRICS PILLAR -------------------------------------------------------
   # Logs alone don't answer "is the pipeline healthy / is the host coping".
   # These two sources add the metrics pillar, shipped into Elasticsearch
@@ -61,16 +79,15 @@ sources:
     type: internal_metrics
     scrape_interval_secs: 30
 
-  # The edge HOST's CPU / memory / disk / network. procfs_root / sysfs_root
-  # point at the host's /proc and /sys, bind-mounted read-only into this
-  # container (see docker-compose.yml's vector_outbound volumes), so these
-  # are the host's real numbers rather than this container's cgroup-limited
-  # view.
+  # The edge HOST's CPU / memory / disk / network. The host's /proc and /sys
+  # are bind-mounted read-only into this container (see docker-compose.yml's
+  # vector_outbound volumes) and pointed at with the PROCFS_ROOT / SYSFS_ROOT
+  # environment variables (set on the service) -- host_metrics reads those env
+  # vars, NOT config fields -- so these are the host's real numbers rather than
+  # this container's cgroup-limited view.
   host_metrics_in:
     type: host_metrics
     scrape_interval_secs: 30
-    procfs_root: /host/proc
-    sysfs_root: /host/sys
 
 transforms:
   # reverse_proxy's stdout repeats what it writes to its log files (nginx logs
@@ -210,6 +227,36 @@ transforms:
       .honeypot_system = "edge_host"
       .tags = ["host", "metrics", "honeypot"]
 
+  # Each pool_state/pool_events line is already a JSON object; parse it, hoist
+  # its fields to the top level, and tag it like every other source. The
+  # exporter stamps each line with an ISO ts, kept as the event's timestamp so
+  # the SIEM's time field lines up with when the state was really observed.
+  pool_state_tag:
+    type: remap
+    inputs:
+      - pool_state_in
+    source: |
+      parsed, err = parse_json(.message)
+      if err == null { . = merge(., object!(parsed)) }
+      .log_type = "pool_state"
+      if .ts != null { .timestamp = parse_timestamp(.ts, "%+") ?? .timestamp }
+      .environment = "${ENVIRONMENT:-development}"
+      .honeypot_system = "pool_manager"
+      .tags = ["pool", "state", "honeypot"]
+
+  pool_events_tag:
+    type: remap
+    inputs:
+      - pool_events_in
+    source: |
+      parsed, err = parse_json(.message)
+      if err == null { . = merge(., object!(parsed)) }
+      .log_type = "pool_events"
+      if .ts != null { .timestamp = parse_timestamp(.ts, "%+") ?? .timestamp }
+      .environment = "${ENVIRONMENT:-development}"
+      .honeypot_system = "pool_manager"
+      .tags = ["pool", "events", "honeypot"]
+
 sinks:
   # Output to the Vector aggregator on the SIEM VM at 147.175.151.193, over
   # mTLS, replacing Filebeat's output.logstash (beats/lumberjack protocol)
@@ -226,6 +273,8 @@ sinks:
       - redis_tag
       - vector_metrics_tag
       - host_metrics_tag
+      - pool_state_tag
+      - pool_events_tag
     address: "${VECTOR_HOST:-147.175.151.193}:${VECTOR_PORT:-6000}"
     tls:
       enabled: true

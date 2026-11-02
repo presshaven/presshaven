@@ -546,10 +546,20 @@ services:
       - ./production_database_data:/source_db:ro
       - ./honeypot_database_migrations:/migrations:ro
       - ./scripts:/scripts:ro
+      # Shared with vector_outbound (read-only there): pool_manager writes its
+      # live pool view + latency events here as JSONL, Vector tails them into
+      # the SIEM (honeypot-pool_state-* / honeypot-pool_events-*). A named
+      # volume, as redis_data is, to avoid the vmhgfs bind-mount chown issue.
+      - pool_state_logs:/var/log/pool_state
     environment:
       - COMPOSE_PROJECT=honeypot-ids-system-v1
       - REDIS_HOST=session_store
       - REDIS_PASSWORD=${REDIS_PASSWORD}
+      # Ship the pool state to the SIEM (see state_export.py). Directory is the
+      # shared volume above; snapshots are throttled to one per this many
+      # seconds (the reconcile loop runs far more often). Empty dir = disabled.
+      - POOL_STATE_EXPORT_DIR=/var/log/pool_state
+      - POOL_STATE_SNAPSHOT_SECONDS=${POOL_STATE_SNAPSHOT_SECONDS:-30}
       # Production's password: the clone / content-sync helpers read
       # production with it. No root password: every pool database gets its
       # own random one, and no pool its user password from this.
@@ -2130,10 +2140,15 @@ services:
       # mounting the Docker socket or the raw container log tree here.
       # Redis logs (if available) – named volume (vmhgfs bind-mount does not support chown)
       - redis_data:/var/log/redis:ro
-      # The edge host's /proc and /sys, read-only, so vector.yaml's
-      # host_metrics_in source (procfs_root/sysfs_root) reports the HOST's
-      # real CPU/memory/disk/network rather than this container's own
-      # cgroup-limited view. Read-only: this is a metrics read, nothing writes.
+      # pool_manager's pushed pool state + latency events (JSONL), tailed by the
+      # pool_state_in / pool_events_in file sources in vector.yaml. Read-only:
+      # pool_manager is the only writer.
+      - pool_state_logs:/var/log/pool_state:ro
+      # The edge host's /proc and /sys, read-only, pointed at by the
+      # PROCFS_ROOT/SYSFS_ROOT env vars below, so vector.yaml's host_metrics_in
+      # source reports the HOST's real CPU/memory/disk/network rather than this
+      # container's own cgroup-limited view. Read-only: this is a metrics read,
+      # nothing writes.
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
     environment:
@@ -2143,6 +2158,11 @@ services:
       # container) and the SIEM address is unresolved -- it validates and
       # then ships nothing. Every variable it reads is set here, by us.
       - VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION=true
+      # host_metrics_in reads the host's /proc and /sys (bind-mounted above)
+      # from these env vars, not from config fields -- so it reports the host's
+      # real figures, not this container's cgroup-limited view.
+      - PROCFS_ROOT=/host/proc
+      - SYSFS_ROOT=/host/sys
       - ELK_ENABLED=${ELK_ENABLED:-true}
       - VECTOR_HOST=${VECTOR_HOST:-147.175.151.193}
       - VECTOR_PORT=${VECTOR_PORT:-6000}
@@ -2386,6 +2406,10 @@ volumes:
   honeypot_eshop_files_3:
     driver: local
   redis_data:
+    driver: local
+  # pool_manager's pushed pool state + latency events (JSONL), tailed by
+  # vector_outbound into the SIEM. Named volume, as redis_data is.
+  pool_state_logs:
     driver: local
   suricata_logs:
     driver: local

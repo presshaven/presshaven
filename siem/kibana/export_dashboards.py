@@ -24,7 +24,8 @@ DASHBOARD_IDS = [
     "dashboard-ids-alerts", "dashboard-web-threat-overview",
     "dashboard-threat-decisions", "dashboard-session-analysis",
     "dashboard-attack-patterns", "dashboard-threat-intel",
-    "dashboard-infra-logs",
+    "dashboard-infra-logs", "dashboard-pipeline-health",
+    "dashboard-pool-capacity", "dashboard-pattern-coverage",
 ]
 OUTPUT_PATH = Path(__file__).resolve().parent / "saved_objects" / "honeypot-dashboards.ndjson"
 
