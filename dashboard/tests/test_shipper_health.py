@@ -84,5 +84,67 @@ class CombineTests(unittest.TestCase):
         self.assertEqual(sh.aggregator_state([]), "unknown")
 
 
+class _FakeTarget:
+    """Minimal stand-in for docker_ctl.Target: aggregator_state reads .ps(),
+    clear_all_documents reads .ps() and .build()."""
+    def __init__(self, reachable: bool):
+        self._reachable = reachable
+
+    def ps(self):
+        return [{"Service": "vector_inbound", "State": "running", "Health": "healthy"}] if self._reachable else []
+
+    def build(self, *args):
+        return (["docker", "compose", *args], "/cwd")
+
+
+class ClearAllDocumentsTests(unittest.TestCase):
+    """core.shipper_health.clear_all_documents -- the SIEM-wipe the Log
+    Pipeline and SIEM Analytics pages both dispatch to."""
+
+    def setUp(self):
+        self._orig_creds = sh.get_elastic_credentials
+        self._orig_exec = sh._es_exec
+        sh.get_elastic_credentials = lambda state: ("elastic", "pw")
+
+    def tearDown(self):
+        sh.get_elastic_credentials = self._orig_creds
+        sh._es_exec = self._orig_exec
+
+    def test_unreachable_siem(self):
+        deleted, err = sh.clear_all_documents([_FakeTarget(False)], state=None)
+        self.assertIsNone(deleted)
+        self.assertIn("not reachable", err)
+
+    def test_missing_credentials(self):
+        sh.get_elastic_credentials = lambda state: None
+        deleted, err = sh.clear_all_documents([_FakeTarget(True)], state=None)
+        self.assertIsNone(deleted)
+        self.assertIn("credentials", err)
+
+    def test_success_returns_deleted_count(self):
+        sh._es_exec = lambda argv, cwd: '{"deleted": 1234, "total": 1234, "failures": []}'
+        deleted, err = sh.clear_all_documents([_FakeTarget(True)], state=None)
+        self.assertEqual(deleted, 1234)
+        self.assertIsNone(err)
+
+    def test_unexpected_response_is_surfaced(self):
+        sh._es_exec = lambda argv, cwd: "missing authentication credentials"
+        deleted, err = sh.clear_all_documents([_FakeTarget(True)], state=None)
+        self.assertIsNone(deleted)
+        self.assertIn("Unexpected response", err)
+
+    def test_picks_the_reachable_target(self):
+        captured = {}
+
+        def fake_exec(argv, cwd):
+            captured["argv"] = argv
+            return '{"deleted": 0}'
+
+        sh._es_exec = fake_exec
+        # First target unreachable, second reachable -> must use the second.
+        sh.clear_all_documents([_FakeTarget(False), _FakeTarget(True)], state=None)
+        self.assertIn("_delete_by_query", " ".join(captured["argv"]))
+
+
 if __name__ == "__main__":
     unittest.main()

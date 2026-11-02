@@ -47,6 +47,8 @@ This isn't an accident of two people building unrelated things — it's a delibe
 
 Every log event picked up by the edge shipper is tagged with `log_type` (`docker`, `nginx_access`, `nginx_error`, `nginx_security`, `suricata`, `suricata_fast`, `redis`) before it ever leaves the edge host; the aggregator's Elasticsearch sink uses that field to route each event into its own daily index (`honeypot-nginx_access-2026.08.05`, `honeypot-suricata-2026.08.05`, etc.) — fixed this session; it used to write everything into a single literal `hello-world-index` placeholder that was never replaced with real index logic.
 
+Beyond those logs, the shipper also carries the **metrics pillar** into the same Elasticsearch: Vector's own `internal_metrics` (pipeline health — events in/out, discarded/errored counts, buffer fill, send failures) from both the edge shipper and the SIEM aggregator land in `honeypot-vector_metrics-*` (told apart by `vector_role`), and the edge host's `host_metrics` (CPU/memory/disk/network, read from the host's `/proc`/`/sys` bind-mounted read-only into `vector_outbound`) land in `honeypot-host_metrics-*`. Both are flattened from metric events to log events with `metric_to_log` so the log-only Elasticsearch sink accepts them, and `log_type`-tagged like everything else so the existing `honeypot-*` data view picks them up with no extra config. (The request-level **trace pillar** — the proxy's per-request score/decay/route/pattern decision trace — is already carried on `honeypot-nginx_security-*`/`honeypot-nginx_error-*`.)
+
 ## Edge URL policy (whitelist + honeypot targets)
 
 The dashboard has two pages for the edge's URL policy: **URL Whitelist**

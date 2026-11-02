@@ -43,12 +43,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.docker_ctl import target_for
+from core import shipper_health as sh
+from core.docker_ctl import target_for, targets_for
 from core.kibana_credentials import get_elastic_credentials
 from core.kibana_report import render_kibana_pdf
 from core.state import AppState
 from ui.browser_widget import BrowserWidget
-from ui.common import ErrorBanner
+from ui.common import ErrorBanner, Job, confirm, danger_button
 from ui.flow_layout import FlowLayout
 from ui.kibana_export import KibanaCapture
 
@@ -160,6 +161,19 @@ class KibanaPage(QWidget):
         self._capture: KibanaCapture | None = None
         self._export_path = ""
 
+        # Wipe every honeypot-* document from Elasticsearch -- the same
+        # _delete_by_query the Log Pipeline page's "Clear all documents"
+        # button runs (core/shipper_health.clear_all_documents), surfaced
+        # here too since this is the page people actually look at the SIEM
+        # data on. Indices and mappings stay, so Vector keeps shipping.
+        self._clear_jobs: set[Job] = set()
+        self.clear_btn = danger_button("Clear Elasticsearch", self._clear_elasticsearch)
+        self.clear_btn.setToolTip(
+            "Permanently delete every honeypot-* document stored in Elasticsearch "
+            "(all shipped logs, metrics, alerts and events, and the Kibana history "
+            "built from them). The indices stay and Vector keeps shipping new data.")
+        toolbar.addWidget(self.clear_btn)
+
         toolbar_widget = QWidget()
         toolbar_widget.setLayout(toolbar)
         layout.addWidget(toolbar_widget)
@@ -267,6 +281,42 @@ class KibanaPage(QWidget):
     def _navigate_to(self, path: str) -> None:
         base = _default_kibana_url(self.state).rstrip("/")
         self.browser.navigate(base + path)
+
+    def _clear_elasticsearch(self) -> None:
+        if not confirm(
+            self, "Clear Elasticsearch",
+            "This permanently deletes every honeypot-* document currently stored in "
+            "Elasticsearch — all shipped logs, metrics, alerts and events, and the "
+            "Kibana history and dashboards built from them.\n\n"
+            "The indices themselves stay and Vector keeps shipping new data, so the "
+            "pipeline is unaffected, but the data already in the SIEM cannot be recovered.\n\n"
+            "Delete all documents now?",
+        ):
+            return
+        self.clear_btn.setEnabled(False)
+        self.clear_btn.setText("Clearing…")
+        siem = targets_for("siem", self.state)
+        job = Job(lambda: sh.clear_all_documents(siem, self.state), self)
+        self._clear_jobs.add(job)
+
+        def finished(result, error):
+            self.clear_btn.setEnabled(True)
+            self.clear_btn.setText("Clear Elasticsearch")
+            self._clear_jobs.discard(job)
+            job.deleteLater()
+            if error or result is None:
+                QMessageBox.warning(self, "Clear Elasticsearch failed", error or "no data")
+                return
+            deleted, derr = result
+            if derr:
+                QMessageBox.warning(self, "Clear Elasticsearch failed", derr)
+                return
+            QMessageBox.information(
+                self, "Elasticsearch cleared",
+                f"Deleted {deleted:,} document(s) from the SIEM.\n\n"
+                "Reload a dashboard to see it empty; new data will appear as Vector ships it.")
+        job.done.connect(finished)
+        job.start()
 
     def _on_remember_toggled(self, checked: bool) -> None:
         self.state.kibana_remember_credentials = checked

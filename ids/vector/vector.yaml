@@ -48,6 +48,30 @@ sources:
       - /var/log/redis/*.log
     ignore_older_secs: 86400 # 24h
 
+  # --- METRICS PILLAR -------------------------------------------------------
+  # Logs alone don't answer "is the pipeline healthy / is the host coping".
+  # These two sources add the metrics pillar, shipped into Elasticsearch
+  # alongside the logs (honeypot-vector_metrics-* / honeypot-host_metrics-*)
+  # so the SIEM can show delivery health and host load, not only events.
+
+  # Vector's own pipeline health: events in/out per component, discarded and
+  # errored counts, buffer fill, send failures -- i.e. the direct "are the
+  # logs actually being shipped, and did anything get dropped" signal.
+  vector_metrics_in:
+    type: internal_metrics
+    scrape_interval_secs: 30
+
+  # The edge HOST's CPU / memory / disk / network. procfs_root / sysfs_root
+  # point at the host's /proc and /sys, bind-mounted read-only into this
+  # container (see docker-compose.yml's vector_outbound volumes), so these
+  # are the host's real numbers rather than this container's cgroup-limited
+  # view.
+  host_metrics_in:
+    type: host_metrics
+    scrape_interval_secs: 30
+    procfs_root: /host/proc
+    sysfs_root: /host/sys
+
 transforms:
   # reverse_proxy's stdout repeats what it writes to its log files (nginx logs
   # every line to both /var/log/nginx/* and stdout), and those files are
@@ -148,6 +172,44 @@ transforms:
       .honeypot_system = "session_store"
       .tags = ["redis", "session", "honeypot"]
 
+  # The Elasticsearch sink (on the SIEM aggregator) only accepts LOG events,
+  # so each metric is flattened into a log event first (metric_to_log: name,
+  # kind, tags, and the gauge/counter value become fields), then tagged with
+  # the same .log_type/.environment scheme every other source uses so it
+  # routes into its own honeypot-{log_type}-DATE index and the honeypot-*
+  # data view already picks it up.
+  vector_metrics_log:
+    type: metric_to_log
+    inputs:
+      - vector_metrics_in
+  vector_metrics_tag:
+    type: remap
+    inputs:
+      - vector_metrics_log
+    source: |
+      .log_type = "vector_metrics"
+      # This shipper, as opposed to the SIEM-side aggregator's own
+      # internal_metrics (siem/vector/vector.yaml) -- both land in
+      # honeypot-vector_metrics-* and are told apart by .vector_role.
+      .vector_role = "edge_shipper"
+      .environment = "${ENVIRONMENT:-development}"
+      .honeypot_system = "reverse_proxy"
+      .tags = ["vector", "metrics", "honeypot"]
+
+  host_metrics_log:
+    type: metric_to_log
+    inputs:
+      - host_metrics_in
+  host_metrics_tag:
+    type: remap
+    inputs:
+      - host_metrics_log
+    source: |
+      .log_type = "host_metrics"
+      .environment = "${ENVIRONMENT:-development}"
+      .honeypot_system = "edge_host"
+      .tags = ["host", "metrics", "honeypot"]
+
 sinks:
   # Output to the Vector aggregator on the SIEM VM at 147.175.151.193, over
   # mTLS, replacing Filebeat's output.logstash (beats/lumberjack protocol)
@@ -162,6 +224,8 @@ sinks:
       - nginx_security_tag
       - nginx_error_tag
       - redis_tag
+      - vector_metrics_tag
+      - host_metrics_tag
     address: "${VECTOR_HOST:-147.175.151.193}:${VECTOR_PORT:-6000}"
     tls:
       enabled: true

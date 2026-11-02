@@ -2130,6 +2130,12 @@ services:
       # mounting the Docker socket or the raw container log tree here.
       # Redis logs (if available) – named volume (vmhgfs bind-mount does not support chown)
       - redis_data:/var/log/redis:ro
+      # The edge host's /proc and /sys, read-only, so vector.yaml's
+      # host_metrics_in source (procfs_root/sysfs_root) reports the HOST's
+      # real CPU/memory/disk/network rather than this container's own
+      # cgroup-limited view. Read-only: this is a metrics read, nothing writes.
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
     environment:
       # Vector 0.50+ no longer expands ${VAR} in its config unless asked to:
       # without this, vector.yaml's docker_logs filter stays the literal

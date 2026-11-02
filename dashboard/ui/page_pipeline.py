@@ -68,26 +68,6 @@ def _check(edge: Target, siem_targets: list[Target], state):
     return sh.combine(enabled, why, shipper, logs), agg, index_stats, logs
 
 
-def _clear_docs(siem_targets: list[Target], state):
-    """Delete every honeypot-* document in the SIEM. Returns (deleted, error):
-    (int, None) on success, (None, message) when the SIEM isn't reachable, the
-    credentials are missing, or Elasticsearch returned something unexpected.
-    Runs docker/ssh, so off-thread."""
-    agg_target = next((t for t in siem_targets if sh.aggregator_state(t.ps()) != "unknown"), None)
-    if agg_target is None:
-        return None, "The SIEM stack is not reachable from this machine."
-    creds = get_elastic_credentials(state)
-    if creds is None:
-        return None, "No Elasticsearch credentials available (set them on the SIEM page)."
-    argv, cwd = agg_target.build("exec", "-T", "es01", "sh", "-c",
-                                 sh.ES_DELETE_ALL_CURL.format(password=creds[1]))
-    out = _run(argv, cwd)
-    deleted = sh.parse_delete_result(out)
-    if deleted is None:
-        return None, f"Unexpected response from Elasticsearch: {out[:200].strip() or '(no output)'}"
-    return deleted, None
-
-
 class PipelinePage(QWidget):
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
@@ -218,7 +198,7 @@ class PipelinePage(QWidget):
         self.clear_btn.setEnabled(False)
         self.clear_btn.setText("Clearing…")
         siem = targets_for("siem", self.state)
-        job = Job(lambda: _clear_docs(siem, self.state), self)
+        job = Job(lambda: sh.clear_all_documents(siem, self.state), self)
         self._jobs.add(job)
 
         def finished(result, error):

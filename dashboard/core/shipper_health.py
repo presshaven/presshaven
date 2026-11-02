@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from dataclasses import dataclass, field
 
 from core.container_status import classify, DOWN, EXITED_BAD, EXITED_OK, CREATED
 from core.container_status import STOPPED as C_STOPPED
+from core.kibana_credentials import get_elastic_credentials
 
 SHIPPER_SERVICE = "vector_outbound"
 AGGREGATOR_SERVICE = "vector_inbound"
@@ -172,6 +174,38 @@ def parse_delete_result(text: str) -> int | None:
         return int(data["deleted"])
     except (TypeError, ValueError):
         return None
+
+
+def _es_exec(argv, cwd) -> str:
+    # The delete-by-query below allows ES itself up to 120 s (--max-time 120),
+    # so the subprocess must outlast that -- a 30 s cap here would kill a wipe
+    # of a large index mid-flight and report a spurious failure.
+    try:
+        return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=130).stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+
+
+def clear_all_documents(siem_targets, state):
+    """Delete every honeypot-* document in the SIEM (a match_all
+    _delete_by_query, see ES_DELETE_ALL_CURL -- indices and mappings stay, so
+    Vector keeps shipping into them). Returns (deleted, None) on success, or
+    (None, message) when the SIEM isn't reachable, the credentials are missing,
+    or Elasticsearch returned something unexpected. Runs docker/ssh, so call it
+    off the GUI thread."""
+    agg_target = next((t for t in siem_targets if aggregator_state(t.ps()) != "unknown"), None)
+    if agg_target is None:
+        return None, "The SIEM stack is not reachable from this machine."
+    creds = get_elastic_credentials(state)
+    if creds is None:
+        return None, "No Elasticsearch credentials available (set them on the SIEM page)."
+    argv, cwd = agg_target.build("exec", "-T", "es01", "sh", "-c",
+                                 ES_DELETE_ALL_CURL.format(password=creds[1]))
+    out = _es_exec(argv, cwd)
+    deleted = parse_delete_result(out)
+    if deleted is None:
+        return None, f"Unexpected response from Elasticsearch: {out[:200].strip() or '(no output)'}"
+    return deleted, None
 
 
 def aggregator_state(containers: list[dict]) -> str:

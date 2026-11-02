@@ -18,6 +18,14 @@ sources:
       ca_file: /usr/share/vector/certs/ca/ca.crt
       verify_certificate: true # enforces client certificate verification (mTLS)
 
+  # This aggregator's OWN pipeline health -- the ES-writing end of the
+  # pipeline, so the receiving side is observable too (the edge shipper
+  # ships its own internal_metrics across the wire; this is the other end).
+  # Both land in honeypot-vector_metrics-* and are told apart by .vector_role.
+  aggregator_metrics_in:
+    type: internal_metrics
+    scrape_interval_secs: 30
+
 transforms:
   enrich:
     type: remap
@@ -476,11 +484,29 @@ transforms:
       del(.log.offset)
       del(.source.ip)
 
+  # The Elasticsearch sink only accepts LOG events, so the aggregator's own
+  # metrics are flattened to logs and tagged the same way the edge shipper
+  # tags its metrics, so they route into honeypot-vector_metrics-DATE too.
+  # (A separate path from `enrich`: metrics need none of its log parsing.)
+  aggregator_metrics_log:
+    type: metric_to_log
+    inputs:
+      - aggregator_metrics_in
+  aggregator_metrics_tag:
+    type: remap
+    inputs:
+      - aggregator_metrics_log
+    source: |
+      .log_type = "vector_metrics"
+      .vector_role = "siem_aggregator"
+      .tags = ["vector", "metrics", "siem"]
+
 sinks:
   elasticsearch_out:
     type: elasticsearch
     inputs:
       - enrich
+      - aggregator_metrics_tag
     endpoints:
       - "${ELASTIC_HOSTS}" # Replace with your Elasticsearch URL
     bulk:
