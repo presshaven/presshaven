@@ -250,6 +250,54 @@ services:
       - elastic
     restart: "no"
 
+  # Seeds the active Kibana alerting rules (Elasticsearch-query rules that
+  # fire on honeypot diversions, high-severity Suricata alerts, honeytoken
+  # use, session compromise, CVE attempts and offensive scanners). Unlike the
+  # dashboards, rules are not importable saved objects, so this posts each one
+  # through /api/alerting/rule by its stable id -- delete-then-create so the
+  # committed definition in kibana/saved_objects/alert_rules/ always wins,
+  # the same "the file is the source of truth on every up" semantics the
+  # dashboards' overwrite=true import has. Mirrors kibana_dashboards_setup:
+  # waits for Kibana available, retries, then verifies every rule exists.
+  kibana_alerts_setup:
+    image: curlimages/curl:8.23.0
+    depends_on:
+      kibana:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c '
+        api() { curl -sS --fail-with-body --cacert /certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" -H "kbn-xsrf: true" "$$@"; };
+        echo "Waiting for Kibana to report available...";
+        n=0;
+        until api https://kibana:5601/api/status 2>/dev/null | grep -q "\"overall\":{\"level\":\"available\"";
+        do n=$$((n+1)); [ $$n -ge 120 ] && { echo "Kibana did not become available in 10 min"; exit 1; }; sleep 5; done;
+        ls /rules/*.json >/dev/null 2>&1 || { echo "No rule files mounted at /rules"; exit 1; };
+        echo "Seeding Honeypot alerting rules...";
+        for f in /rules/*.json; do
+          id=$$(basename "$$f" .json);
+          # Tolerate a 404 here: the rule simply does not exist yet on a fresh stack.
+          api -X DELETE "https://kibana:5601/api/alerting/rule/$$id" >/dev/null 2>&1 || true;
+          n=0;
+          until out=$$(api -X POST "https://kibana:5601/api/alerting/rule/$$id" -H "Content-Type: application/json" --data-binary "@$$f") && echo "$$out" | grep -q "\"id\":\"$$id\"";
+          do echo "$$out" | head -c 400; echo; n=$$((n+1)); [ $$n -ge 24 ] && { echo "Rule $$id was never accepted"; exit 1; }; echo "Retrying $$id in 5 s..."; sleep 5; done;
+          echo "  created $$id";
+        done;
+        echo "Verifying every rule exists...";
+        missing=0;
+        for f in /rules/*.json; do
+          id=$$(basename "$$f" .json);
+          if api "https://kibana:5601/api/alerting/rule/$$id" >/dev/null 2>&1; then echo "  ok      $$id"; else echo "  MISSING $$id"; missing=1; fi;
+        done;
+        [ $$missing -eq 0 ] || { echo "Some alerting rules are missing after seeding"; exit 1; };
+        echo "Alerting rules seeded.";
+      '
+    volumes:
+      - ../elasticsearch/certs/ca:/certs/ca:ro
+      - ../kibana/saved_objects/alert_rules:/rules:ro
+    networks:
+      - elastic
+    restart: "no"
+
   vector_inbound:
     image: timberio/vector:${VECTOR_VERSION}-debian
     container_name: vector_inbound

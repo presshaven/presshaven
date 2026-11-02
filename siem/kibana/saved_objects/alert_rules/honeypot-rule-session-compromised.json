@@ -1,0 +1,31 @@
+{
+  "actions": [],
+  "consumer": "stackAlerts",
+  "enabled": true,
+  "name": "Honeypot: session compromise detected",
+  "params": {
+    "aggType": "count",
+    "esQuery": "{\"query\": {\"bool\": {\"filter\": [{\"term\": {\"security_event_type.keyword\": \"session_compromised\"}}]}}}",
+    "excludeHitsFromPreviousRun": true,
+    "groupBy": "all",
+    "index": [
+      "honeypot-*"
+    ],
+    "searchType": "esQuery",
+    "size": 100,
+    "threshold": [
+      0
+    ],
+    "thresholdComparator": ">",
+    "timeField": "timestamp",
+    "timeWindowSize": 10,
+    "timeWindowUnit": "m"
+  },
+  "rule_type_id": ".es-query",
+  "schedule": {
+    "interval": "1m"
+  },
+  "tags": [
+    "honeypot"
+  ]
+}

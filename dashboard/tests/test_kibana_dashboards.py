@@ -17,12 +17,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 KIBANA_DIR = REPO_ROOT / "siem" / "kibana"
 
 
-def _load_builder():
-    spec = importlib.util.spec_from_file_location("build_dashboards", KIBANA_DIR / "build_dashboards.py")
+def _load_module(name: str):
+    spec = importlib.util.spec_from_file_location(name, KIBANA_DIR / f"{name}.py")
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["build_dashboards"] = mod
+    sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+def _load_builder():
+    return _load_module("build_dashboards")
 
 
 class KibanaDashboardTests(unittest.TestCase):
@@ -155,6 +159,91 @@ class DecisionLogFieldTests(unittest.TestCase):
         for field in self.FIELDS:
             with self.subTest(field=field):
                 self.assertIn(f'{field}="(?P<', text)
+
+
+def _fields_in_query(es_query_json: str) -> set[str]:
+    """Base field names (``.keyword`` stripped) referenced by an .es-query
+    rule's stored esQuery DSL string -- the term/range/exists clauses."""
+    dsl = json.loads(es_query_json)
+    fields: set[str] = set()
+    for clause in dsl["query"]["bool"]["filter"]:
+        kind, inner = next(iter(clause.items()))
+        if kind in ("term", "range"):
+            field = next(iter(inner))
+        elif kind == "exists":
+            field = inner["field"]
+        else:  # pragma: no cover - guards against a new clause type slipping in untested
+            raise AssertionError(f"unhandled query clause {kind}")
+        fields.add(field.removesuffix(".keyword"))
+    return fields
+
+
+class KibanaAlertRuleTests(unittest.TestCase):
+    """The committed alerting-rule JSON (what kibana_alerts_setup posts) must
+    be exactly what build_alert_rules.py defines, every rule must be a
+    license-free .es-query rule, and every field it queries must be one the
+    vector.yaml pipeline actually produces."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ar = _load_module("build_alert_rules")
+        cls.vector = (REPO_ROOT / "siem/vector/vector.yaml").read_text(encoding="utf-8")
+
+    def test_committed_rule_files_are_up_to_date(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fresh_dir = Path(tmp)
+            self.ar.write_json(fresh_dir)
+            committed = {p.name: p.read_text(encoding="utf-8")
+                         for p in self.ar.RULES_DIR.glob("*.json")}
+            fresh = {p.name: p.read_text(encoding="utf-8")
+                     for p in fresh_dir.glob("*.json")}
+            self.assertEqual(
+                fresh, committed,
+                "siem/kibana/saved_objects/alert_rules/ is stale: run "
+                "`python3 siem/kibana/build_alert_rules.py --json`")
+
+    def test_every_rule_is_a_license_free_es_query(self):
+        for rule_id, body in self.ar.RULES:
+            with self.subTest(rule=rule_id):
+                api = self.ar._api_body(body)
+                # .es-query is the only rule type available on the Basic
+                # (free) license without a connector -- see the module docstring.
+                self.assertEqual(api["rule_type_id"], ".es-query")
+                self.assertEqual(api["consumer"], "stackAlerts")
+                self.assertEqual(api["params"]["index"], ["honeypot-*"])
+                self.assertEqual(api["params"]["timeField"], "timestamp")
+                self.assertEqual(api["actions"], [])
+                self.assertTrue(api["enabled"])
+                self.assertIn("honeypot", api["tags"])
+
+    def test_every_queried_field_exists_in_the_pipeline(self):
+        for rule_id, body in self.ar.RULES:
+            for field in _fields_in_query(body["params"]["esQuery"]):
+                with self.subTest(rule=rule_id, field=field):
+                    # Every field vector.yaml sets or parses is referenced
+                    # there with a leading dot (.log_type, .route, .alert.severity, ...).
+                    self.assertIn(f".{field}", self.vector,
+                                  f"{field} is not produced by vector.yaml")
+
+    def test_rule_files_carry_no_local_only_keys(self):
+        # The _description helper is for the committed file's readers / these
+        # tests; it must never reach the alerting API body.
+        for path in self.ar.RULES_DIR.glob("*.json"):
+            with self.subTest(file=path.name):
+                self.assertNotIn("_description", path.read_text(encoding="utf-8"))
+
+    def test_compose_seeds_and_mounts_the_rules(self):
+        compose = (REPO_ROOT / "siem/docker/docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("kibana_alerts_setup:", compose)
+        self.assertIn("../kibana/saved_objects/alert_rules:/rules:ro", compose)
+        self.assertIn("/api/alerting/rule/", compose)
+
+    def test_dashboard_app_links_the_alerts_rules_page(self):
+        path = "/app/management/insightsAndAlerting/triggersActions/rules"
+        page = (REPO_ROOT / "dashboard/ui/page_kibana.py").read_text(encoding="utf-8")
+        notes = (REPO_ROOT / "dashboard/core/kibana_report.py").read_text(encoding="utf-8")
+        self.assertIn(path, page)
+        self.assertIn(path, notes)
 
 
 if __name__ == "__main__":

@@ -67,6 +67,10 @@ _BOOKMARKS = [
     ("Session Analysis", "/app/dashboards#/view/dashboard-session-analysis"),
     ("Attack Patterns", "/app/dashboards#/view/dashboard-attack-patterns"),
     ("Threat Intelligence", "/app/dashboards#/view/dashboard-threat-intel"),
+    # The active alerting rules kibana_alerts_setup seeds (siem/kibana/
+    # build_alert_rules.py) -- Stack Management's Rules list, where each
+    # Honeypot rule's status (active/ok) and its fired alerts are shown.
+    ("Alerts (Rules)", "/app/management/insightsAndAlerting/triggersActions/rules"),
     ("Discover", "/app/discover"),
 ]
 

@@ -89,6 +89,16 @@ PAGE_NOTES: dict[str, str] = {
         "<b>Flagged Event Feed</b> lists the events behind it all, exportable from Discover "
         "as CSV."
     ),
+    "/app/management/insightsAndAlerting/triggersActions/rules": (
+        "The active Kibana alerting rules seeded for the honeypot "
+        "(Elasticsearch-query rules over <code>honeypot-*</code>): a session "
+        "diverted to the decoy, a high-severity Suricata alert, a used "
+        "honeytoken, a compromised session, a CVE exploitation attempt and an "
+        "offensive scanner. Each runs on a schedule and raises an alert, shown "
+        "here as its status (<i>Active</i> when currently firing) with a count "
+        "of alerts; open a rule to see what matched. These fire inside Kibana "
+        "independently of the dashboard app's own OS notifications."
+    ),
     "/app/discover": (
         "Raw log search over the <code>honeypot-*</code> data view: every event Vector "
         "shipped into Elasticsearch, newest first, with a histogram of event volume over "

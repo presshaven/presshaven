@@ -1,0 +1,31 @@
+{
+  "actions": [],
+  "consumer": "stackAlerts",
+  "enabled": true,
+  "name": "Honeypot: high-severity Suricata IDS alert",
+  "params": {
+    "aggType": "count",
+    "esQuery": "{\"query\": {\"bool\": {\"filter\": [{\"term\": {\"log_type.keyword\": \"suricata\"}}, {\"term\": {\"event_type.keyword\": \"alert\"}}, {\"range\": {\"alert.severity\": {\"lte\": 2}}}]}}}",
+    "excludeHitsFromPreviousRun": true,
+    "groupBy": "all",
+    "index": [
+      "honeypot-*"
+    ],
+    "searchType": "esQuery",
+    "size": 100,
+    "threshold": [
+      0
+    ],
+    "thresholdComparator": ">",
+    "timeField": "timestamp",
+    "timeWindowSize": 5,
+    "timeWindowUnit": "m"
+  },
+  "rule_type_id": ".es-query",
+  "schedule": {
+    "interval": "1m"
+  },
+  "tags": [
+    "honeypot"
+  ]
+}
