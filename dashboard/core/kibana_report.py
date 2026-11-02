@@ -89,6 +89,18 @@ PAGE_NOTES: dict[str, str] = {
         "<b>Flagged Event Feed</b> lists the events behind it all, exportable from Discover "
         "as CSV."
     ),
+    "/app/dashboards#/view/dashboard-infra-logs": (
+        "Operational health of the stack itself, from the shipped log types that carry no "
+        "threat score. <b>Proxy Log Levels</b> and <b>Proxy Log Levels Over Time</b> separate "
+        "nginx's routine <i>info</i> request traces from real <i>warn</i>/<i>error</i>/"
+        "<i>crit</i> lines; <b>Container Logs by Service</b>, <b>Top Containers by Log "
+        "Volume</b> and <b>stdout vs stderr</b> show which container is noisy and whether it "
+        "is writing to its error stream; <b>Redis Session-Store Log Lines</b> counts the "
+        "session store's activity and <b>Operational Log Volume Over Time</b> the three "
+        "together. The <b>Recent Log Lines</b> feed is the raw text behind them, for spotting "
+        "a crash loop or an error burst. The reverse proxy's own logs ship as files, not "
+        "through Docker, so it is not among the containers here."
+    ),
     "/app/management/insightsAndAlerting/triggersActions/rules": (
         "The active Kibana alerting rules seeded for the honeypot "
         "(Elasticsearch-query rules over <code>honeypot-*</code>): a session "

@@ -139,6 +139,59 @@ class ThreatIntelTests(unittest.TestCase):
                 self.assertIn(f".{field}", tests)
 
 
+class InfraLogsTests(unittest.TestCase):
+    """The Infrastructure & Ops Logs dashboard surfaces the shipped log types
+    that carry no threat score (docker, redis, nginx_error) -- it must stay
+    wired like every other dashboard and only aggregate on fields the pipeline
+    actually produces for those types."""
+
+    # Fields the edge shipper's tag transforms set explicitly (ids/vector/
+    # vector.yaml); container_name/stream come from the docker_logs source
+    # itself, and the service label from the enrich transform flattening the
+    # dotted label keys.
+    EDGE_SET_FIELDS = ("log_type", "log_level")
+    PIPELINE_FIELDS = {"log_type", "log_level", "container_name", "stream",
+                       "label.com_docker_compose_service", "timestamp"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bd = _load_builder()
+
+    def test_dashboard_exists_and_wired(self):
+        self.assertIn("dashboard-infra-logs", self.bd.DASHBOARD_IDS)
+
+    def test_edge_shipper_sets_the_fields(self):
+        edge = (REPO_ROOT / "ids/vector/vector.yaml").read_text(encoding="utf-8")
+        for field in self.EDGE_SET_FIELDS:
+            with self.subTest(field=field):
+                self.assertIn(f".{field} = ", edge)
+
+    def test_panels_scope_to_infra_log_types(self):
+        # Every infra panel (and its saved search) must name one of the three
+        # infra log types in its query, never count across all types.
+        for vid, body in self.bd.VISUALIZATIONS + self.bd.SEARCHES:
+            if not (vid.startswith("viz-infra-") or vid.startswith("search-infra-")):
+                continue
+            src = json.loads(body["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"])
+            query = src["query"]["query"]
+            if vid == "viz-infra-guide":  # a markdown note has no query
+                continue
+            with self.subTest(viz=vid):
+                self.assertTrue(
+                    any(t in query for t in ('"docker"', '"redis"', '"nginx_error"')),
+                    f"{vid} does not scope to an infra log_type: {query!r}")
+
+    def test_panels_only_use_pipeline_fields(self):
+        for vid, body in self.bd.VISUALIZATIONS:
+            if not vid.startswith("viz-infra-"):
+                continue
+            for agg in json.loads(body["attributes"]["visState"])["aggs"]:
+                field = agg["params"].get("field")
+                if field:
+                    with self.subTest(viz=vid, field=field):
+                        self.assertIn(field.removesuffix(".keyword"), self.PIPELINE_FIELDS)
+
+
 class DecisionLogFieldTests(unittest.TestCase):
     """nginx's security log format and Vector's parser must agree on the
     routing-decision fields the Threat Decisions dashboard is built on."""

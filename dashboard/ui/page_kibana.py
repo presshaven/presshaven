@@ -56,10 +56,10 @@ from ui.kibana_export import KibanaCapture
 KIBANA_PORT = 5601
 _PROFILE_NAME = "kibana_dashboard"
 
-# (button label, path relative to the Kibana root) -- verified live against
-# this repo's own SIEM stack via `GET /api/saved_objects/_find?type=dashboard`
-# and `type=index-pattern` (5 dashboards, 1 data view "honeypot-*" -- all
-# dashboards and the single data view are covered here).
+# (button label, path relative to the Kibana root) -- the dashboard ids match
+# siem/kibana/build_dashboards.py's DASHBOARDS (kept in step by
+# test_dashboard_app_links_every_dashboard), plus the honeypot-* data view's
+# Rules list and Discover.
 _BOOKMARKS = [
     ("Home", "/app/home"),
     ("Web Traffic & Threat Overview", "/app/dashboards#/view/dashboard-web-threat-overview"),
@@ -68,6 +68,7 @@ _BOOKMARKS = [
     ("Session Analysis", "/app/dashboards#/view/dashboard-session-analysis"),
     ("Attack Patterns", "/app/dashboards#/view/dashboard-attack-patterns"),
     ("Threat Intelligence", "/app/dashboards#/view/dashboard-threat-intel"),
+    ("Infrastructure & Ops Logs", "/app/dashboards#/view/dashboard-infra-logs"),
     # The active alerting rules kibana_alerts_setup seeds (siem/kibana/
     # build_alert_rules.py) -- Stack Management's Rules list, where each
     # Honeypot rule's status (active/ok) and its fired alerts are shown.

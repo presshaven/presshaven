@@ -266,6 +266,20 @@ _TI_Q = 'client_ip:*'
 _TI_MAL_Q = 'risk_verdict:"flagged"'
 _TI_TECH_Q = 'attack_technique:*'
 
+# Infrastructure / ops log types: the shipped logs that carry no threat score
+# but say whether the stack itself is healthy -- Docker container stdout/stderr
+# (honeypot-docker-*: .container_name, .stream, .label.com_docker_compose_service
+# once the enrich transform flattens the dotted label keys), the Redis session
+# store (honeypot-redis-*) and nginx's own error/info log (honeypot-nginx_error-*,
+# carrying .log_level info/warn/error/crit from the edge shipper's nginx_error_tag).
+# reverse_proxy's own container stdout is shipped as files (nginx_access/security/
+# error) and filtered OUT of docker_logs (docker_dedupe), so it is deliberately
+# absent from the container panels.
+_INFRA_Q = 'log_type:("docker" or "redis" or "nginx_error")'
+_DOCKER_Q = 'log_type:"docker"'
+_REDIS_Q = 'log_type:"redis"'
+_NGINX_ERR_Q = 'log_type:"nginx_error"'
+
 # Each dashboard answers a different question and uses different panel
 # types, so they no longer read as copies of each other (the old four were
 # all "count metric + count-over-time + pies + top-N tables"):
@@ -317,6 +331,20 @@ VISUALIZATIONS = [
     _viz("viz-ids-dest-ports", "Targeted Destination Ports", "tagcloud",
          [_count_metric_agg(), _terms_agg("dest_port", size=15)],
          query=_IDS_Q, params_extra=_TAGCLOUD),
+    # proto is Suricata's transport layer (TCP/UDP/ICMP), distinct from the
+    # app_proto pie above -- it was in every eve alert but never surfaced.
+    _viz("viz-ids-transport-proto", "Alerts by Transport Protocol", "pie",
+         [_count_metric_agg(), _terms_agg("proto.keyword", size=6, label="Transport")],
+         query=_IDS_Q, params_extra=_PIE),
+    # HTTP-layer alerts carry the host, URL and method Suricata saw on the
+    # wire (eve http.*), an independent record of what was targeted next to
+    # the proxy's own nginx_security URIs.
+    _viz("viz-ids-http-targets", "Targeted URLs (HTTP alerts)", "table",
+         [_count_metric_agg("Alerts"),
+          _terms_agg("http.hostname.keyword", agg_id="3", size=5, schema="bucket", label="Host"),
+          _terms_agg("http.url.keyword", agg_id="2", size=15, schema="bucket", label="URL"),
+          _terms_agg("http.http_method.keyword", agg_id="4", size=6, schema="bucket", label="Method")],
+         query=f'{_IDS_Q} and http.url:*', params_extra=_TABLE),
 
     # -- Web Traffic ---------------------------------------------------------
     _markdown("viz-web-guide", "About: Web Traffic",
@@ -377,6 +405,27 @@ VISUALIZATIONS = [
           _terms_agg("uri.keyword", agg_id="2", size=25, schema="bucket", label="URI"),
           _terms_agg("cache_status.keyword", agg_id="3", size=8, schema="bucket", label="Cache status")],
          query=_CACHE_Q, params_extra=_TABLE),
+    # body_bytes_sent (the response size nginx logged, parsed to an int in
+    # vector.yaml) summed over time = how much data each route actually served
+    # -- the honeypot decoy's bandwidth cost vs. production's, previously logged
+    # but never charted.
+    _viz("viz-web-bytes-over-time", "Bandwidth Served Over Time by Route", "area",
+         [_metric_agg("sum", "body_bytes_sent", "1", "Bytes sent"), _date_histogram_agg(),
+          _terms_agg("route.keyword", agg_id="3", size=5, schema="group", label="Route")],
+         query=_WEB_Q,
+         params_extra=_xy_params("area", [("1", "Bytes sent")], mode="stacked", y_title="Bytes sent")),
+    # http_version (from the request line) tells a modern browser on HTTP/2.0
+    # from a scripted client or scanner that usually speaks HTTP/1.1 or 1.0.
+    _viz("viz-web-http-versions", "HTTP Protocol Versions", "pie",
+         [_count_metric_agg(), _terms_agg("http_version.keyword", size=5, label="HTTP version")],
+         query=_WEB_Q, params_extra=_PIE),
+    # referer: where a request said it came from -- "-" (none) is typical of a
+    # direct hit / tool / scanner; a real site or an internal page points at a
+    # browser following a link. Excluded "-" so the panel lists only real ones.
+    _viz("viz-web-top-referers", "Top Referers", "table",
+         [_count_metric_agg("Requests"),
+          _terms_agg("referer.keyword", agg_id="2", size=15, schema="bucket", label="Referer")],
+         query=f'{_WEB_Q} and referer:* and not referer:"-"', params_extra=_TABLE),
 
     # -- Threat Decisions & Decay ---------------------------------------------
     _markdown("viz-decision-guide", "About: Threat Decisions & Decay",
@@ -492,6 +541,15 @@ VISUALIZATIONS = [
     _viz("viz-attack-honeytoken-types", "Honeytoken Hits by Type", "pie",
          [_count_metric_agg(), _terms_agg("security_event.token_type.keyword", size=10, label="Token type")],
          query=f'{_ATTACK_Q} and security_event_type:"honeytoken_used"', params_extra=_PIE),
+    # security_event.signals: the named reasons the proxy scored a request as
+    # high-risk (e.g. a matched pattern, a bad user-agent, request frequency)
+    # -- an array parsed by the enrich transform but not shown anywhere until
+    # now. Says WHY a request was flagged, next to WHAT pattern it matched.
+    _viz("viz-attack-risk-signals", "Top Risk Signals (why requests were flagged)", "table",
+         [_count_metric_agg("Events"),
+          _metric_agg("cardinality", "remote_addr.keyword", "3", "Distinct IPs"),
+          _terms_agg("security_event.signals.keyword", agg_id="2", size=20, schema="bucket", label="Risk signal")],
+         query=f'{_ATTACK_Q} and security_event.signals:*', params_extra=_TABLE),
 
     # -- Threat Intelligence --------------------------------------------------
     _markdown("viz-ti-guide", "About: Threat Intelligence",
@@ -567,6 +625,45 @@ VISUALIZATIONS = [
           _terms_agg("risk_verdict.keyword", agg_id="3", size=3, schema="group", label="Verdict")],
          query=_TI_Q,
          params_extra=_xy_params("histogram", [("1", "Events")], mode="stacked", y_title="Events")),
+
+    # -- Infrastructure & Ops Logs --------------------------------------------
+    _markdown("viz-infra-guide", "About: Infrastructure & Ops Logs",
+              "**Is the stack itself healthy?** These are the shipped log types that carry no "
+              "threat score: Docker container output, the Redis session store, and nginx's own "
+              "error/info log. **Proxy Log Levels** separates routine `info` request traces from "
+              "real `warn`/`error`/`crit` lines; **Container Logs by Service** and **stdout vs "
+              "stderr** show which container is noisy and whether it is writing to its error "
+              "stream. The reverse proxy's own access/security/error logs are shipped as files "
+              "(the other dashboards), not through Docker, so it does not appear among the "
+              "containers here."),
+    _viz("viz-infra-redis", "Redis Session-Store Log Lines", "metric",
+         [_count_metric_agg("Redis log lines")], query=_REDIS_Q),
+    _viz("viz-infra-nginx-level-pie", "Proxy Log Levels", "pie",
+         [_count_metric_agg(), _terms_agg("log_level.keyword", size=6, label="Level")],
+         query=_NGINX_ERR_Q, params_extra=_PIE),
+    _viz("viz-infra-log-volume", "Operational Log Volume Over Time by Type", "area",
+         [_count_metric_agg(), _date_histogram_agg(),
+          _terms_agg("log_type.keyword", agg_id="3", size=4, schema="group", label="Log type")],
+         query=_INFRA_Q,
+         params_extra=_xy_params("area", [("1", "Log lines")], mode="stacked", y_title="Log lines")),
+    _viz("viz-infra-nginx-levels", "Proxy Log Levels Over Time (nginx)", "histogram",
+         [_count_metric_agg(), _date_histogram_agg(),
+          _terms_agg("log_level.keyword", agg_id="3", size=6, schema="group", label="Level")],
+         query=_NGINX_ERR_Q,
+         params_extra=_xy_params("histogram", [("1", "Lines")], mode="stacked", y_title="Lines")),
+    _viz("viz-infra-containers", "Container Logs by Service", "horizontal_bar",
+         [_count_metric_agg(),
+          _terms_agg("label.com_docker_compose_service.keyword", size=12, label="Service")],
+         query=_DOCKER_Q,
+         params_extra=_xy_params("horizontal_bar", [("1", "Log lines")], horizontal=True)),
+    _viz("viz-infra-container-table", "Top Containers by Log Volume", "table",
+         [_count_metric_agg("Log lines"),
+          _metric_agg("cardinality", "stream.keyword", "3", "Streams used"),
+          _terms_agg("container_name.keyword", agg_id="2", size=15, schema="bucket", label="Container")],
+         query=_DOCKER_Q, params_extra=_TABLE),
+    _viz("viz-infra-streams", "Container Output: stdout vs stderr", "pie",
+         [_count_metric_agg(), _terms_agg("stream.keyword", size=2, label="Stream")],
+         query=_DOCKER_Q, params_extra=_PIE),
 ]
 
 # Discover saved searches: event lists with the indicator columns already
@@ -584,6 +681,13 @@ SEARCHES = [
             'security_event_type:("honeytoken_used" or "session_compromised")',
             "Planted honeytokens being reused and hijacked sessions: proof a user took "
             "something from the honeypot and tried to use it."),
+    _search("search-infra-feed", "Infrastructure: Recent Log Lines",
+            ["log_type", "container_name", "label.com_docker_compose_service", "stream",
+             "log_level", "message"],
+            _INFRA_Q,
+            "Docker, Redis and nginx-error log lines newest first -- the raw operational "
+            "feed behind the Infrastructure panels, for spotting a crash loop or an error "
+            "burst. Share > CSV in Discover exports it."),
 ]
 
 
@@ -642,6 +746,8 @@ DASHBOARDS = [
             ("viz-ids-dest-ports", 36, 8, 12, 15),
             ("viz-ids-top-signatures", 0, 23, 28, 15),
             ("viz-ids-top-source-ips", 28, 23, 20, 15),
+            ("viz-ids-transport-proto", 0, 38, 16, 13),
+            ("viz-ids-http-targets", 16, 38, 32, 13),
         ],
     ),
     _dashboard(
@@ -660,7 +766,10 @@ DASHBOARDS = [
             ("viz-web-top-user-agents", 24, 26, 24, 13),
             ("viz-web-request-kind-pie", 0, 39, 16, 10),
             ("viz-web-cache-pie", 16, 39, 16, 10),
+            ("viz-web-http-versions", 32, 39, 16, 10),
             ("viz-web-cached-uris", 0, 49, 48, 16),
+            ("viz-web-bytes-over-time", 0, 65, 32, 13),
+            ("viz-web-top-referers", 32, 65, 16, 13),
         ],
     ),
     _dashboard(
@@ -702,6 +811,7 @@ DASHBOARDS = [
             ("viz-attack-top-cves", 0, 24, 18, 14),
             ("viz-attack-top-ips", 18, 24, 18, 14),
             ("viz-attack-honeytoken-types", 36, 24, 12, 14),
+            ("viz-attack-risk-signals", 0, 38, 48, 15),
         ],
     ),
     _dashboard(
@@ -719,6 +829,21 @@ DASHBOARDS = [
             ("viz-ti-verdicts", 30, 56, 18, 13),
             ("viz-ti-cves", 0, 69, 20, 14),
             ("search-ti-flagged-feed", 20, 69, 28, 14),
+        ],
+    ),
+    _dashboard(
+        "dashboard-infra-logs", "Honeypot: Infrastructure & Ops Logs",
+        "Operational health of the stack itself: container log volume by service and stream, nginx error/info levels over time, Redis session-store activity, and a raw infrastructure log feed.",
+        [
+            ("viz-infra-guide", 0, 0, 24, 9),
+            ("viz-infra-redis", 24, 0, 8, 9),
+            ("viz-infra-nginx-level-pie", 32, 0, 16, 9),
+            ("viz-infra-log-volume", 0, 9, 24, 13),
+            ("viz-infra-nginx-levels", 24, 9, 24, 13),
+            ("viz-infra-containers", 0, 22, 24, 15),
+            ("viz-infra-container-table", 24, 22, 24, 15),
+            ("viz-infra-streams", 0, 37, 16, 13),
+            ("search-infra-feed", 16, 37, 32, 13),
         ],
     ),
 ]
