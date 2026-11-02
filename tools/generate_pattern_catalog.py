@@ -150,6 +150,13 @@ SOURCES = {
         "module": "vulnerability_rules.lua",
         "detail": "detect_vulnerability_pattern() narrow plugin-path detector",
     },
+    "owasp-crs": {
+        "label": "OWASP CRS",
+        "module": "pattern_rules.lua",
+        "detail": "Generic signature derived from the OWASP ModSecurity Core "
+                  "Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, "
+                  "NoSQL, deeper SQLi/XSS, CRLF)",
+    },
     "headers": {
         "label": "Header analysis",
         "module": "pattern_rules.lua",
@@ -401,8 +408,15 @@ def parse_layer1() -> list[dict]:
     block = text[start:text.index("\n}", start)]
     entries: list[dict] = []
     wstg = ""
+    # Everything from the "OWASP CRS-derived generic signatures" banner to the
+    # end of the SUSPICIOUS_PATTERNS block is sourced from the OWASP ModSecurity
+    # Core Rule Set; tag those entries so build_layer1() can mark their
+    # provenance as OWASP CRS in the catalogue.
+    in_crs = False
     for raw in block.splitlines():
         line = raw.strip()
+        if "OWASP CRS-derived" in line:
+            in_crs = True
         match = re.search(r"WSTG-[A-Z]+(?:-[A-Z0-9]+)?", line)
         if match and line.startswith("--"):
             wstg = match.group(0)
@@ -421,6 +435,7 @@ def parse_layer1() -> list[dict]:
                 "name": display,
                 "wstg": wstg,
                 "cves": cves,
+                "crs": in_crs,
             })
     return entries
 
@@ -1150,6 +1165,10 @@ class CatalogBuilder:
                 record["score"] = 15
                 record["score_note"] = "+15 base score when this generic entry matches"
             self.source(record, "lua-layer1", f"{entry['helper']} · {entry['match']} · +15")
+            if entry.get("crs"):
+                # Note the OWASP CRS provenance (shown in the pattern DB's
+                # Sources column/panel and filterable there).
+                self.source(record, "owasp-crs")
             self.signature(record, layer="layer1", match=entry["match"], kind=entry["helper"],
                            name=entry["name"], score=15)
             self.detection(record, f"Lua Layer 1 generic entry · +15 · `{entry['match']}`")

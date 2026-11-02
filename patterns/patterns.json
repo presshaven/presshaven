@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated": "2026-11-01",
+  "generated": "2026-11-02",
   "source_files": [
     "ids/reverse_proxy_enhanced/lua/pattern_rules.lua",
     "ids/reverse_proxy_enhanced/lua/init.lua",
@@ -30,6 +30,11 @@
       "label": "Vulnerability rules",
       "module": "vulnerability_rules.lua",
       "detail": "detect_vulnerability_pattern() narrow plugin-path detector"
+    },
+    "owasp-crs": {
+      "label": "OWASP CRS",
+      "module": "pattern_rules.lua",
+      "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)"
     },
     "headers": {
       "label": "Header analysis",
@@ -154,6 +159,7 @@
       "lua-layer2": 49,
       "lua-vuln": 13,
       "method": 2,
+      "owasp-crs": 72,
       "preset": 33,
       "session": 1,
       "suricata": 70,
@@ -5984,6 +5990,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · /bin/bash · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6038,6 +6050,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · /bin/sh · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6092,6 +6110,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · bash%s+%-i · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6146,6 +6170,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · ;%s*id[%s%+;&|$] · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6200,6 +6230,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · ;%s*id$ · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6254,6 +6290,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · nc%s+%-e · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6308,6 +6350,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · perl%s+%-e · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6362,6 +6410,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · python%s+%-c · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6416,6 +6470,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · %$%(%s*%a · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6470,6 +6530,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · ;%s*uname · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6524,6 +6590,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · &&%s*wget[%s%+] · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6578,6 +6650,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · ;%s*whoami · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6783,6 +6861,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · getruntime · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6837,6 +6921,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · java.lang.runtime · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6891,6 +6981,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · %${jndi · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6945,6 +7041,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · jndi:dns · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -6999,6 +7101,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · jndi:ldap · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -7053,6 +7161,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · jndi:rmi · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -7107,6 +7221,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · runtime.exec · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -7161,6 +7281,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · <iframe · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -7215,6 +7341,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · <svg · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -7269,6 +7401,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · document.cookie · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -7323,6 +7461,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · fromcharcode · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -7377,6 +7521,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · onclick= · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -7431,6 +7581,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · onfocus= · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -7485,6 +7641,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · onmouseover= · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -7539,6 +7701,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · vbscript: · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -7661,6 +7829,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · expression%s*%( · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8092,6 +8266,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · allow_url_include · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8146,6 +8326,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · auto_prepend_file · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8200,6 +8386,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · boot.ini · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8339,6 +8531,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · etc/hosts · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8393,6 +8591,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · etc/passwd · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8447,6 +8651,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · etc/shadow · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8501,6 +8711,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · expect:// · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8640,6 +8856,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · glob:// · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8694,6 +8916,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · phar:// · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8748,6 +8976,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · base64_decode%s*%( · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8802,6 +9036,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · call_user_func · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8856,6 +9096,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · exec%s*%( · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8910,6 +9156,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · passthru%s*%( · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -8964,6 +9216,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · proc_open%s*%( · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9018,6 +9276,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · shell_exec%s*%( · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9072,6 +9336,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · system%s*%( · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9126,6 +9396,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · proc/self/environ · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9180,6 +9456,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · win.ini · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9234,6 +9516,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · zip:// · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9288,6 +9576,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · %%0d · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9342,6 +9636,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · %%0a · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9457,6 +9757,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · 169.254.169.254 · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9511,6 +9817,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · <!doctype · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9565,6 +9877,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · <!entity · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9619,6 +9937,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · [$gt] · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9673,6 +9997,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · [$ne] · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9727,6 +10057,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · [$where] · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9781,6 +10117,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · constructor.prototype · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9835,6 +10177,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · latest/meta-data · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9889,6 +10237,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · metadata.google.internal · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -9943,6 +10297,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · __proto__ · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -11438,6 +11798,12 @@
           "module": "pattern_rules.lua",
           "detail": "plain · information_schema · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -11492,6 +11858,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · '%s+and%s+ · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -11546,6 +11918,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · extractvalue%s*%( · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -11600,6 +11978,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · group_concat%s*%( · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -11722,6 +12106,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · into%s+outfile · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -11776,6 +12166,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · load_file%s*%( · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -11830,6 +12226,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · '%s+or%s+'?%d · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -11983,6 +12385,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · pg_sleep%s*%( · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -12159,6 +12567,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · updatexml%s*%( · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -12213,6 +12627,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · waitfor%s+delay · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -12388,6 +12808,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · %${{ · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -12442,6 +12868,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · <%%= · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [
@@ -12496,6 +12928,12 @@
           "module": "pattern_rules.lua",
           "detail": "pat · {{%s*%d · +15",
           "key": "lua-layer1"
+        },
+        {
+          "label": "OWASP CRS",
+          "module": "pattern_rules.lua",
+          "detail": "Generic signature derived from the OWASP ModSecurity Core Rule Set (LFI/RFI, RCE, PHP/Java injection, SSTI, SSRF, XXE, NoSQL, deeper SQLi/XSS, CRLF)",
+          "key": "owasp-crs"
         }
       ],
       "signatures": [

@@ -18,8 +18,22 @@ class PatternCatalogTests(unittest.TestCase):
         self.assertEqual(self.catalog.summary().get("cves"), 15)
         self.assertEqual(self.catalog.summary().get("suricata_sids"), 70)
         for key in ("lua-layer1", "lua-layer2", "lua-cve", "lua-vuln",
-                    "headers", "upload", "suricata", "preset"):
+                    "headers", "upload", "suricata", "preset", "owasp-crs"):
             self.assertIn(key, self.catalog.sources)
+
+    def test_owasp_crs_patterns_carry_crs_provenance(self):
+        # The generic signatures derived from the OWASP ModSecurity Core Rule
+        # Set (pattern_rules.lua's "OWASP CRS-derived" block) must be marked as
+        # sourced from OWASP CRS so the pattern DB shows/filters their origin.
+        crs = [p for p in self.catalog.patterns
+               if any(s["key"] == "owasp-crs" for s in p["sources"])]
+        self.assertGreaterEqual(len(crs), 60)
+        self.assertEqual(self.catalog.sources["owasp-crs"]["label"], "OWASP CRS")
+        for pattern in crs:
+            with self.subTest(pattern=pattern["id"]):
+                detail = next(s["detail"] for s in pattern["sources"] if s["key"] == "owasp-crs")
+                self.assertIn("OWASP", detail)
+                self.assertIn("Core Rule Set", detail)
 
     def test_ids_are_unique_and_every_entry_is_well_formed(self):
         ids = [p["id"] for p in self.catalog.patterns]
