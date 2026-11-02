@@ -217,6 +217,18 @@ class _Popup(QFrame):
         self.scroll.setWidget(self.body)
         outer.addWidget(self.scroll)
 
+        # Footer reminder: the list only ever shows registry-enabled patterns
+        # (the caller filters via core.pattern_registry.active_presets), so tell
+        # the user where more come from -- enabling them in the Pattern Database.
+        self.footer = QLabel(
+            "Need more? Enable patterns on the Pattern Database page and they "
+            "appear here automatically.")
+        self.footer.setWordWrap(True)
+        self.footer.setStyleSheet(
+            f"color: {c['fg_muted']}; font-size: 8pt; padding: 4px 2px 0 2px; "
+            f"border-top: 1px solid {c['border']};")
+        outer.addWidget(self.footer)
+
 
 class PatternPickerButton(QToolButton):
     selection_changed = pyqtSignal()   # the checked batch changed (multi mode)

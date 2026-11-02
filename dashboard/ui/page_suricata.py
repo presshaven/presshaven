@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
     QPushButton, QSplitter, QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
@@ -52,7 +52,10 @@ class SuricataPage(QWidget):
         self.refresh_btn = QPushButton("Refresh")
         bar.addWidget(self.refresh_btn)
         self.copy_btn = QPushButton("Copy logs")
-        self.copy_btn.setToolTip("Copy the alerts currently shown (after any filter) to the clipboard")
+        self.copy_btn.setToolTip(
+            "Copy the alerts currently shown (after any filter) to the clipboard.\n"
+            "To copy only some, select rows in the table (Ctrl/Shift-click for "
+            "several) and press Ctrl+C.")
         bar.addWidget(self.copy_btn)
         self.export_btn = QPushButton("Export logs…")
         self.export_btn.setToolTip("Save the alerts currently shown (after any filter) to a file")
@@ -95,9 +98,14 @@ class SuricataPage(QWidget):
         self.alert_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         self.alert_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.alert_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.alert_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        # Extended selection: Ctrl/Shift-click to pick several specific rows (not
+        # forced all-or-one), and Ctrl+C copies exactly that selection.
+        self.alert_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.alert_table.verticalHeader().setVisible(False)
         self.alert_table.itemSelectionChanged.connect(self._on_alert_selected)
+        copy_sel = QShortcut(QKeySequence.StandardKey.Copy, self.alert_table)
+        copy_sel.setContext(Qt.ShortcutContext.WidgetShortcut)
+        copy_sel.activated.connect(self._copy_selected)
         alert_split.addWidget(self.alert_table)
         self.alert_detail = QPlainTextEdit(readOnly=True)
         self.alert_detail.setPlaceholderText("Select an alert to see its full detail.")
@@ -225,10 +233,15 @@ class SuricataPage(QWidget):
         return f"{name} ({base})" if name else base
 
     def _on_alert_selected(self) -> None:
-        rows = self.alert_table.selectionModel().selectedRows()
-        if not rows or rows[0].row() >= len(self._shown_alerts):
-            return
-        a = self._shown_alerts[rows[0].row()]
+        # Detail follows the active (last-clicked) row so it stays meaningful
+        # even while several rows are selected for copying.
+        row = self.alert_table.currentRow()
+        if not 0 <= row < len(self._shown_alerts):
+            rows = self.alert_table.selectionModel().selectedRows()
+            if not rows or rows[0].row() >= len(self._shown_alerts):
+                return
+            row = rows[0].row()
+        a = self._shown_alerts[row]
         lines = []
         for label, value in a.detail_lines():
             if label == "Source":
@@ -238,24 +251,42 @@ class SuricataPage(QWidget):
             lines.append(f"{label}: {value}")
         self.alert_detail.setPlainText("\n".join(lines))
 
-    def _alerts_as_text(self) -> str:
-        """The alerts currently shown (respecting the filter and severity
-        selector), as a tab-separated table -- what Copy/Export logs act on.
-        Empty string when nothing is shown, so the helpers can say so."""
-        if not self._shown_alerts:
+    def _alerts_as_text(self, alerts=None) -> str:
+        """`alerts` (default: everything currently shown, respecting the filter
+        and severity selector) as a tab-separated table -- what Copy/Export act
+        on. Empty string when the list is empty, so the helpers can say so."""
+        alerts = self._shown_alerts if alerts is None else alerts
+        if not alerts:
             return ""
         header = ["Time", "Severity", "Signature", "SID", "Category", "Source", "Target", "URL"]
         rows = ["\t".join(header)]
-        for a in self._shown_alerts:
+        for a in alerts:
             rows.append("\t".join((
                 a.timestamp[:19].replace("T", " "), a.severity_label, a.signature,
                 str(a.sid), a.category, self._endpoint(a.src_ip, a.src_port),
                 self._endpoint(a.dest_ip, a.dest_port), a.url)))
         return "\n".join(rows)
 
+    def _selected_alerts(self) -> list:
+        """The shown alerts whose rows are selected, in table (top-to-bottom)
+        order -- the subset Ctrl+C copies."""
+        rows = sorted(ix.row() for ix in self.alert_table.selectionModel().selectedRows())
+        return [self._shown_alerts[r] for r in rows if 0 <= r < len(self._shown_alerts)]
+
     def _copy_logs(self) -> None:
         if copy_logs(self, self._alerts_as_text(), "alerts"):
             self.status.setText(f"{len(self._shown_alerts)} alert(s) copied")
+
+    def _copy_selected(self) -> None:
+        """Ctrl+C in the alert table: copy just the selected rows. Falls back to
+        every shown alert when nothing is selected, so the shortcut always does
+        something sensible."""
+        selected = self._selected_alerts()
+        if not selected:
+            self._copy_logs()
+            return
+        if copy_logs(self, self._alerts_as_text(selected), "alerts"):
+            self.status.setText(f"{len(selected)} selected alert(s) copied")
 
     def _export_logs(self) -> None:
         name = f"suricata_alerts_{time.strftime('%Y%m%d_%H%M%S')}.tsv"

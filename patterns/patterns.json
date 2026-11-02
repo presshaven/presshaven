@@ -5873,7 +5873,7 @@
       "signatures": [
         {
           "layer": "suricata",
-          "match": "alert http any any -> $HOME_NET $HTTP_PORTS (msg:\"High Rate HTTP Requests\"; flow:established,to_server; pcre:!\"/\\.(css|js|jpe?g|png|gif|svg|webp|webm|mp4|mp3|pdf|woff2?|ttf|eot|otf|ico)(\\?.*)?$/Ui\"; content:!\"admin-ajax.php\"; http_uri; content:!\"wp-cron.php\"; http_uri; content:!\"honeypot-internal-healthprobe\"; http_user_agent; detection_filter:track by_src, count 50, seconds 60; classtype:attempted-dos; sid:1000056; rev:4;)",
+          "match": "alert http any any -> $HOME_NET $HTTP_PORTS (msg:\"High Rate HTTP Requests\"; flow:established,to_server; pcre:!\"/\\.(css|js|jpe?g|png|gif|svg|webp|webm|mp4|mp3|pdf|woff2?|ttf|eot|otf|ico)(\\?.*)?$/Ui\"; content:!\"admin-ajax.php\"; http_uri; content:!\"wp-cron.php\"; http_uri; content:!\"honeypot-internal-healthprobe\"; http_user_agent; detection_filter:track by_src, count 200, seconds 60; classtype:attempted-dos; sid:1000056; rev:5;)",
           "kind": "suricata",
           "sid": 1000056
         }
@@ -5881,7 +5881,7 @@
       "suricata": [
         {
           "sid": 1000056,
-          "rev": 4,
+          "rev": 5,
           "message": "High Rate HTTP Requests",
           "classtype": "attempted-dos"
         }
@@ -10986,7 +10986,7 @@
       "signatures": [
         {
           "layer": "suricata",
-          "match": "alert http any any -> $HOME_NET $HTTP_PORTS (msg:\"WordPress Theme Detection\"; flow:established,to_server; content:\"wp-content/themes/\"; http_uri; content:\"style.css\"; http_uri; classtype:web-application-attack; sid:1000050; rev:1;)",
+          "match": "alert http any any -> $HOME_NET $HTTP_PORTS (msg:\"WordPress Theme Detection\"; flow:established,to_server; content:\"wp-content/themes/\"; http_uri; pcre:\"/wp-content\\/themes\\/[^\\/]+\\/(readme\\.txt|readme\\.html|license\\.txt|changelog\\.txt)/Ui\"; classtype:web-application-attack; sid:1000050; rev:2;)",
           "kind": "suricata",
           "sid": 1000050
         }
@@ -10994,7 +10994,7 @@
       "suricata": [
         {
           "sid": 1000050,
-          "rev": 1,
+          "rev": 2,
           "message": "WordPress Theme Detection",
           "classtype": "web-application-attack"
         }

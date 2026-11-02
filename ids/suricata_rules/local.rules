@@ -292,7 +292,19 @@ alert http any any -> $HOME_NET $HTTP_PORTS (msg:"Malicious User Agent - Burp Su
 #--------------------------------------------------------------------------
 alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Version Detection"; flow:established,to_server; content:"wp-includes/version.php"; http_uri; classtype:web-application-attack; sid:1000049; rev:1;)
 
-alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Theme Detection"; flow:established,to_server; content:"wp-content/themes/"; http_uri; content:"style.css"; http_uri; classtype:web-application-attack; sid:1000050; rev:1;)
+# rev:2 -- fixes a confirmed false positive on ordinary page rendering. The old
+# rule matched `wp-content/themes/` + `style.css` in the URI, but the active
+# theme's style.css is loaded on EVERY page view by EVERY visitor (it carries
+# the CSS that renders the site), so it fired on normal browsing with no
+# fingerprinting intent -- e.g. GET /wp-content/themes/omega-storefront/style.css
+# ?ver=... on a plain homepage load. style.css is indistinguishable between a
+# browser rendering the page and a tool reading the theme header, so it has no
+# attack signal. Real theme enumeration (WPScan et al.) instead pulls a theme's
+# metadata/version files -- readme.txt / readme.html / license.txt / changelog
+# -- which a browser rendering a page never requests. Matching those (mirroring
+# the plugin-enumeration rule 1000051's readme.txt match) keeps the recon signal
+# while style.css page loads stop triggering it.
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Theme Detection"; flow:established,to_server; content:"wp-content/themes/"; http_uri; pcre:"/wp-content\/themes\/[^\/]+\/(readme\.txt|readme\.html|license\.txt|changelog\.txt)/Ui"; classtype:web-application-attack; sid:1000050; rev:2;)
 
 alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Plugin Enumeration"; flow:established,to_server; content:"wp-content/plugins/"; http_uri; content:"readme.txt"; http_uri; classtype:web-application-attack; sid:1000051; rev:1;)
 
@@ -356,7 +368,21 @@ alert http any any -> $HOME_NET $HTTP_PORTS (msg:"Script File Upload Attempt"; f
 # with no attacker present (confirmed live: an admin-ajax.php "High Rate HTTP
 # Requests" alert while merely logged in). Excluding them leaves the rule
 # watching genuine high-rate page/endpoint flooding, which is the DoS signal.
-alert http any any -> $HOME_NET $HTTP_PORTS (msg:"High Rate HTTP Requests"; flow:established,to_server; pcre:!"/\.(css|js|jpe?g|png|gif|svg|webp|webm|mp4|mp3|pdf|woff2?|ttf|eot|otf|ico)(\?.*)?$/Ui"; content:!"admin-ajax.php"; http_uri; content:!"wp-cron.php"; http_uri; content:!"honeypot-internal-healthprobe"; http_user_agent; detection_filter:track by_src, count 50, seconds 60; classtype:attempted-dos; sid:1000056; rev:4;)
+# rev:5 -- raises the threshold from 50 to 200 req/60s after a confirmed false
+# positive on a bare `/` homepage load. The structural issue: Suricata runs on
+# proxy->backend traffic (network_mode:host), so EVERY client shares the reverse
+# proxy's single source IP. `track by_src` therefore can't measure a per-client
+# rate at all -- it sums ALL visitors (plus the dashboard's own polling) into one
+# counter, i.e. it measures total site throughput, not any one attacker. At that
+# aggregation 50 dynamic req/60s is just a modestly busy minute of legitimate
+# browsing, which is why `/` fired. Real per-client rate limiting lives at the
+# application layer, where the true client IP is known (nginx limit_req + the
+# reverse proxy's router.lua scoring, both keyed on the real client); this rule
+# can only be a coarse site-wide volumetric-flood ceiling. 200 non-asset,
+# non-ajax/cron req/60s (~3.3/s sustained for a full minute) sits well above
+# normal aggregate browsing for this stack while a genuine volumetric DoS
+# (hundreds-to-thousands/s) still trips it immediately.
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"High Rate HTTP Requests"; flow:established,to_server; pcre:!"/\.(css|js|jpe?g|png|gif|svg|webp|webm|mp4|mp3|pdf|woff2?|ttf|eot|otf|ico)(\?.*)?$/Ui"; content:!"admin-ajax.php"; http_uri; content:!"wp-cron.php"; http_uri; content:!"honeypot-internal-healthprobe"; http_user_agent; detection_filter:track by_src, count 200, seconds 60; classtype:attempted-dos; sid:1000056; rev:5;)
 
 # rev:2 -- now requires POST, so merely VIEWING the login page never counts.
 # The old rule counted any request whose URI held "wp-login.php", GET included.
