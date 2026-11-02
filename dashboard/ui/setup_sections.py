@@ -492,7 +492,7 @@ def setup_summary(state: AppState) -> list[str]:
     certificates. Key names only, never values."""
     from core.env_upload import EnvUploadError, load_project_env
     from core.paths import EDGE_ENV_EXAMPLE, EDGE_SSL_CERT_DIR
-    remote = state.remote_edge if state.remote_edge.enabled and state.remote_edge.is_configured() else None
+    remote = state.primary_remote("edge")
     out = []
     try:
         env = load_project_env("edge", remote, timeout=10.0)

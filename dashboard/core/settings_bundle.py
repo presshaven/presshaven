@@ -24,7 +24,7 @@ from typing import Any
 from core import edge_policy, honeypot_layer
 from core.env_file import EnvFile
 from core.projects import PROJECTS
-from core.state import AppState, RemoteConfig
+from core.state import AppState, parse_remotes
 
 BUNDLE_VERSION = 1
 
@@ -44,7 +44,7 @@ def export_bundle(state: AppState) -> dict[str, Any]:
     }
     for pid, spec in PROJECTS.items():
         bundle[f"{pid}_env"] = EnvFile.load(spec.env_file).as_dict()
-        bundle[f"remote_{pid}"] = asdict(getattr(state, f"remote_{pid}"))
+        bundle[f"remote_{pid}"] = [asdict(r) for r in state.remotes_for(pid)]
     bundle["honeypot_layer"] = state.honeypot_layer
     bundle["alert_policy"] = dict(state.alert_policy)
     if edge_policy.POLICY_PATH.exists():
@@ -106,12 +106,15 @@ def apply_bundle(bundle: dict[str, Any], state: AppState) -> list[str]:
 
     for pid, spec in PROJECTS.items():
         label = spec.label
-        bundle_key = attr = f"remote_{pid}"
-        if isinstance(bundle.get(bundle_key), dict):
-            # from_dict drops unknown keys (a bundle from another dashboard
-            # version) rather than crashing the whole import over one field.
-            setattr(state, attr, RemoteConfig.from_dict(bundle[bundle_key]))
-            notes.append(f"{label}: remote (SSH) settings replaced.")
+        bundle_key = f"remote_{pid}"
+        value = bundle.get(bundle_key)
+        # parse_remotes accepts both the current list-of-hosts format and a
+        # legacy single-host dict (and drops unknown keys / blank rows), so a
+        # bundle from any dashboard version imports cleanly.
+        if isinstance(value, (list, dict)):
+            remotes = parse_remotes(value)
+            state.set_remotes(pid, remotes)
+            notes.append(f"{label}: {len(remotes)} remote (SSH) host(s) replaced.")
         else:
             notes.append(f"{label}: no {bundle_key} data in bundle, left unchanged.")
 

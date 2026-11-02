@@ -21,6 +21,10 @@ class RemoteConfig:
     # Path to the project directory (containing docker-compose.yml, or for
     # siem the elk_dockerized/docker subdir) on the REMOTE host.
     remote_path: str = ""
+    # Optional human label so a project's list of hosts stays legible when
+    # several share a user/host spelling; falls back to the host (see
+    # display_name). Purely cosmetic -- never part of the ssh destination.
+    name: str = ""
 
     def is_configured(self) -> bool:
         return bool(self.enabled and self.host and self.user and self.key_path)
@@ -29,6 +33,19 @@ class RemoteConfig:
     def address(self) -> str:
         """``user@host`` -- the ssh/scp/rsync destination spelling."""
         return f"{self.user}@{self.host}"
+
+    @property
+    def display_name(self) -> str:
+        """A short label for menus/combos/group titles: the operator's name
+        if set, else the host, else a generic placeholder for a blank row."""
+        return self.name or self.host or "remote"
+
+    def is_empty(self) -> bool:
+        """True for a row the user never filled in -- distinguishes an
+        untouched default from a real (possibly disabled) host, so blank
+        rows can be dropped on save and on legacy migration."""
+        return not (self.host or self.user or self.key_path
+                    or self.remote_path or self.name or self.enabled)
 
     @classmethod
     def from_dict(cls, data: dict) -> "RemoteConfig":
@@ -39,13 +56,34 @@ class RemoteConfig:
         return cls(**{k: v for k, v in data.items() if k in known})
 
 
+def parse_remotes(value) -> list[RemoteConfig]:
+    """Normalize a stored ``remote_<project>`` value into a list.
+
+    Accepts the current format (a list of host dicts) and the legacy
+    single-host format (one dict), so a state.json or settings bundle from
+    before per-project host lists still loads. A legacy dict is kept only
+    when it was ever actually filled in -- an untouched default collapses to
+    an empty list rather than seeding a phantom blank host."""
+    if isinstance(value, list):
+        remotes = [RemoteConfig.from_dict(v) for v in value if isinstance(v, dict)]
+        return [r for r in remotes if not r.is_empty()]
+    if isinstance(value, dict):
+        cfg = RemoteConfig.from_dict(value)
+        return [] if cfg.is_empty() else [cfg]
+    return []
+
+
 @dataclass
 class AppState:
     first_run_complete: bool = False
     window_geometry_b64: str = ""
     last_page: str = "services"
-    remote_edge: RemoteConfig = field(default_factory=RemoteConfig)
-    remote_siem: RemoteConfig = field(default_factory=RemoteConfig)
+    # Per-project lists of SSH hosts (edge/siem) the dashboard can drive in
+    # addition to the always-present local stack. Empty = local only. See
+    # remotes_for()/configured_remotes()/primary_remote() and the Settings
+    # "remote (SSH)" list editors.
+    remote_edge: list = field(default_factory=list)
+    remote_siem: list = field(default_factory=list)
     # How often (ms) StatusPoller re-runs `docker compose ps` for every
     # configured target. Adjustable from Settings -- lower for snappier
     # health-diagram updates, higher to reduce SSH round-trips against a
@@ -97,6 +135,32 @@ class AppState:
     log_search_history: list = field(default_factory=list)
     log_saved_searches: list = field(default_factory=list)
 
+    def remotes_for(self, project: str) -> list[RemoteConfig]:
+        """Every configured-or-not SSH host for a project (edge/siem), as
+        edited in Settings. Unknown project -> empty list."""
+        return getattr(self, f"remote_{project}", [])
+
+    def set_remotes(self, project: str, remotes: list[RemoteConfig]) -> None:
+        setattr(self, f"remote_{project}", list(remotes))
+
+    def configured_remotes(self, project: str) -> list[RemoteConfig]:
+        """Only the hosts that are enabled AND fully filled in -- the ones
+        targets_for() actually drives alongside the local stack."""
+        return [r for r in self.remotes_for(project) if r.is_configured()]
+
+    def primary_remote(self, project: str) -> "RemoteConfig | None":
+        """The first usable remote, for the single-remote consumers (env
+        upload/browse, breach-audit host, etc.) that still assume one. None
+        when the project has no configured host."""
+        configured = self.configured_remotes(project)
+        return configured[0] if configured else None
+
+    def primary_remote_host(self, project: str, default: str = "localhost") -> str:
+        """Hostname of primary_remote(), or ``default`` when the project runs
+        locally -- the spelling the breach/probe pages aim network checks at."""
+        primary = self.primary_remote(project)
+        return primary.host if primary else default
+
     @classmethod
     def load(cls) -> "AppState":
         """Reads STATE_FILE; any missing/unparseable file or field falls
@@ -116,9 +180,10 @@ class AppState:
             if f.name not in raw:
                 continue
             value = raw[f.name]
-            if f.default_factory is RemoteConfig:
-                if isinstance(value, dict):
-                    setattr(state, f.name, RemoteConfig.from_dict(value))
+            if f.name.startswith("remote_"):
+                # New format is a list of host dicts; a legacy single-host
+                # dict is migrated in (see parse_remotes).
+                setattr(state, f.name, parse_remotes(value))
             else:
                 setattr(state, f.name, value)
         return state

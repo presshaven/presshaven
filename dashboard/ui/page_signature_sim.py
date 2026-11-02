@@ -46,7 +46,7 @@ _MONO = "font-family: 'DejaVu Sans Mono','Consolas',monospace;"
 def _base_url(state: AppState) -> str:
     """Same edge URL the Attack Simulation page browses: the remote edge host
     when one is configured, else localhost."""
-    host = state.remote_edge.host if state.remote_edge.is_configured() else "localhost"
+    host = state.primary_remote_host("edge")
     return f"https://{host}"
 
 

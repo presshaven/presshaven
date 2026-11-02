@@ -345,7 +345,7 @@ class PatternDiagramWidget(QWidget):
 
 
 def _default_eshop_url(state: AppState) -> str:
-    host = state.remote_edge.host if state.remote_edge.is_configured() else "localhost"
+    host = state.primary_remote_host("edge")
     return f"https://{host}/"
 
 

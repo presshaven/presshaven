@@ -1091,7 +1091,7 @@ def run_edge_exposure(base_url: str, secret: str, log=lambda s: None) -> list[Pr
 # ---------------------------------------------------------------------------
 
 def base_url_for(state: AppState) -> str:
-    host = state.remote_edge.host if state.remote_edge.is_configured() else "localhost"
+    host = state.primary_remote_host("edge")
     return f"https://{host}"
 
 

@@ -27,10 +27,10 @@ from core.env_upload import EnvUploadError, download_env_text, upload_env_text
 from core.paths import (
     EDGE_ENV_EXAMPLE, EDGE_ENV_FILE, SIEM_ENV_EXAMPLE, SIEM_ENV_FILE,
 )
-from core.state import AppState
+from core.state import AppState, RemoteConfig
 from ui.dependency_banner import DependencyBanner
 from ui.env_editor import EnvEditorWidget
-from ui.remote_config_widget import RemoteConfigWidget
+from ui.remote_config_widget import RemoteHostsWidget
 from ui.setup_sections import (
     AlertsSection, CertsSection, DeploymentSection, HostChecksSection, SecretTools,
     setup_summary,
@@ -90,9 +90,9 @@ class WizardTimeline(QWidget):
         current_index = next((i for i, (pid, _label) in enumerate(steps) if pid == current_id), None)
 
         for i, (pid, label) in enumerate(steps):
-            if pid == PAGE_EDGE_ENV and state.remote_edge.enabled:
+            if pid == PAGE_EDGE_ENV and state.primary_remote("edge") is not None:
                 label = f"{label} (remote)"
-            elif pid == PAGE_SIEM_ENV and state.remote_siem.enabled:
+            elif pid == PAGE_SIEM_ENV and state.primary_remote("siem") is not None:
                 label = f"{label} (remote)"
 
             if current_index is not None and i < current_index:
@@ -195,30 +195,31 @@ class RemotePage(TimelineMixin, QWizardPage):
         layout.setContentsMargins(0, 0, 0, 0)
 
         info = QLabel(
-            "If either project runs on a separate host (the real two-host "
-            "deployment this project is designed for -- see ARCHITECTURE.md), "
-            "configure SSH access here. Leave disabled to control only the "
-            "local stack.\n\n"
-            "A project marked remote here has its .env fetched live from "
-            "that remote host on the next step (prefilling the same form "
-            "you'd see for a local .env) instead of a local file -- Next "
-            "there saves it straight back to the remote host, not here."
+            "If either project runs on one or more separate hosts (the real "
+            "multi-host deployment this project is designed for -- see "
+            "ARCHITECTURE.md), add each over SSH here with \"Add host\". Add "
+            "none to control only the local stack.\n\n"
+            "When a project has at least one configured host, its .env is "
+            "fetched live from the FIRST such host on the next step "
+            "(prefilling the same form you'd see for a local .env) instead "
+            "of a local file -- Next there saves it straight back to that "
+            "remote host, not here."
         )
         info.setWordWrap(True)
         layout.addWidget(info)
 
-        self.edge_widget = RemoteConfigWidget("edge", state.remote_edge)
+        self.edge_widget = RemoteHostsWidget("edge", state.remotes_for("edge"))
         layout.addWidget(QLabel("<b>ids</b>"))
         layout.addWidget(self.edge_widget)
 
-        self.siem_widget = RemoteConfigWidget("siem", state.remote_siem)
+        self.siem_widget = RemoteHostsWidget("siem", state.remotes_for("siem"))
         layout.addWidget(QLabel("<b>siem</b>"))
         layout.addWidget(self.siem_widget)
         layout.addStretch(1)
 
     def validatePage(self) -> bool:
-        self.state.remote_edge = self.edge_widget.to_config()
-        self.state.remote_siem = self.siem_widget.to_config()
+        self.state.set_remotes("edge", self.edge_widget.to_configs())
+        self.state.set_remotes("siem", self.siem_widget.to_configs())
         self.state.save()
         return True
 
@@ -276,7 +277,7 @@ class RemoteAwareEnvPage(TimelineMixin, QWizardPage):
         self._source_is_remote = False
 
     def _remote_config(self):
-        return self.state.remote_edge if self.project == "edge" else self.state.remote_siem
+        return self.state.primary_remote(self.project) or RemoteConfig()
 
     def initializePage(self) -> None:
         super().initializePage()  # TimelineMixin's refresh, then QWizardPage's

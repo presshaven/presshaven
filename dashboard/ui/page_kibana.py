@@ -118,7 +118,7 @@ _AUTOLOGIN_JS_TEMPLATE = """
 
 
 def _default_kibana_url(state: AppState) -> str:
-    host = state.remote_siem.host if state.remote_siem.is_configured() else "localhost"
+    host = state.primary_remote_host("siem")
     return f"https://{host}:{KIBANA_PORT}/"
 
 

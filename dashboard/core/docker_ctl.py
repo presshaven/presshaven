@@ -116,11 +116,16 @@ class Target:
         base = self.spec.label
         if self.compose_file:
             base = f"{base}, {honeypot_layer.active().short_label}"
-        return f"{base} (remote: {self.remote.host})" if self.is_remote else f"{base} (local)"
+        return f"{base} (remote: {self.remote.display_name})" if self.is_remote else f"{base} (local)"
 
     @property
     def key(self) -> str:
-        return f"{self.project}-{'remote' if self.is_remote else 'local'}"
+        """Stable identity for status-poller result lookup. MUST stay unique
+        per remote host now that a project can drive several -- keying only on
+        local/remote would collapse every remote's status into one node."""
+        if not self.is_remote:
+            return f"{self.project}-local"
+        return f"{self.project}-remote-{self.remote.address}:{self.remote.port}"
 
     @property
     def host(self) -> str:
@@ -409,27 +414,27 @@ class Target:
 
 
 def remote_for(project: str, state: AppState) -> RemoteConfig | None:
-    """The project's RemoteConfig if it's enabled AND fully filled in,
-    else None -- i.e. exactly what Target(remote=...) wants."""
-    remote = state.remote_edge if project == "edge" else state.remote_siem
-    return remote if remote.is_configured() else None
+    """The project's PRIMARY (first configured) remote, or None when it runs
+    purely locally -- i.e. exactly what Target(remote=...) wants for the
+    single-target features that still assume one host."""
+    return state.primary_remote(project)
 
 
 def target_for(project: str, state: AppState) -> Target:
     """The ONE target a single-target feature should talk to for `project`:
-    its remote host when one is configured, otherwise local. Used by pages
-    that don't offer a local/remote choice (Patterns, Kibana, the
+    its primary remote host when one is configured, otherwise local. Used by
+    pages that don't offer a local/remote choice (Patterns, Kibana, the
     security feed)."""
     return Target(project=project, remote=remote_for(project, state))
 
 
 def targets_for(project: str, state: AppState) -> list[Target]:
-    """All targets to show for a project: always local, plus remote if
-    configured."""
+    """All targets to show for a project: always the local stack, plus one
+    Target per configured remote host (in the order they appear in
+    Settings)."""
     result = [Target(project=project, remote=None)]
-    remote = remote_for(project, state)
-    if remote is not None:
-        result.append(Target(project=project, remote=remote))
+    result += [Target(project=project, remote=r)
+               for r in state.configured_remotes(project)]
     return result
 
 

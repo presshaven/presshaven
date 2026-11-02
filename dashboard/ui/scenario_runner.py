@@ -37,8 +37,7 @@ class ScenarioScriptsTab(QWidget):
         self.script_combo.addItems(scenario_scripts())
         row.addWidget(self.script_combo, stretch=1)
         row.addWidget(QLabel("Host:"))
-        self.host_edit = QLineEdit(
-            state.remote_edge.host if state.remote_edge.is_configured() else "127.0.0.1")
+        self.host_edit = QLineEdit(state.primary_remote_host("edge", "127.0.0.1"))
         self.host_edit.setMaximumWidth(180)
         row.addWidget(self.host_edit)
         row.addWidget(QLabel("Port:"))

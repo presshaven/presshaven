@@ -38,7 +38,7 @@ from ui.common import ErrorBanner, muted_label, set_status
 
 
 def _edge_host(state: AppState) -> str:
-    return state.remote_edge.host if state.remote_edge.is_configured() else "localhost"
+    return state.primary_remote_host("edge")
 
 
 class _TargetedAccessInterceptor(QWebEngineUrlRequestInterceptor):

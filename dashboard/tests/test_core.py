@@ -361,3 +361,93 @@ class FinishedOkTests(unittest.TestCase):
               {"Service": "kibana_dashboards_setup", "State": "exited", "ExitCode": 1},
               {"Service": "kibana", "State": "running", "ExitCode": 0}]
         self.assertEqual([c["Service"] for c in finished_ok(cs)], ["init-password"])
+
+
+class RemoteHostsModelTests(unittest.TestCase):
+    """Per-project lists of SSH hosts: legacy single-remote migration, the
+    primary/configured accessors, targets_for() fan-out with unique keys, and
+    the settings-bundle round trip. See core/state.py and core/docker_ctl.py."""
+
+    def _state_from(self, raw: dict):
+        import json as _json
+        from core import state as state_mod
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "state.json"
+            path.write_text(_json.dumps(raw))
+            with mock.patch.object(state_mod, "STATE_FILE", path):
+                return state_mod.AppState.load()
+
+    def test_legacy_single_dict_migrates_to_one_element_list(self):
+        s = self._state_from({"remote_edge": {
+            "enabled": True, "host": "h1", "user": "u", "key_path": "/k"}})
+        self.assertEqual([r.host for r in s.remotes_for("edge")], ["h1"])
+        self.assertEqual(s.remotes_for("siem"), [])
+
+    def test_untouched_legacy_default_dict_collapses_to_empty(self):
+        s = self._state_from({"remote_edge": {
+            "enabled": False, "host": "", "port": 22, "user": "",
+            "key_path": "", "remote_path": ""}})
+        self.assertEqual(s.remotes_for("edge"), [])
+
+    def test_new_list_format_loads_and_drops_blank_rows(self):
+        s = self._state_from({"remote_edge": [
+            {"enabled": True, "host": "h1", "user": "u", "key_path": "/k"},
+            {"enabled": False, "host": "", "user": "", "key_path": ""},
+            {"enabled": True, "host": "h2", "user": "u", "key_path": "/k"},
+        ]})
+        self.assertEqual([r.host for r in s.remotes_for("edge")], ["h1", "h2"])
+
+    def test_primary_and_configured_skip_unconfigured(self):
+        from core.state import AppState, RemoteConfig
+        s = AppState()
+        s.set_remotes("edge", [
+            RemoteConfig(enabled=False, host="off", user="u", key_path="/k"),
+            RemoteConfig(enabled=True, host="on1", user="u", key_path="/k"),
+            RemoteConfig(enabled=True, host="on2", user="u", key_path="/k"),
+        ])
+        self.assertEqual([r.host for r in s.configured_remotes("edge")], ["on1", "on2"])
+        self.assertEqual(s.primary_remote("edge").host, "on1")
+        self.assertEqual(s.primary_remote_host("edge"), "on1")
+
+    def test_primary_remote_host_falls_back_when_local_only(self):
+        from core.state import AppState
+        s = AppState()
+        self.assertIsNone(s.primary_remote("edge"))
+        self.assertEqual(s.primary_remote_host("edge"), "localhost")
+        self.assertEqual(s.primary_remote_host("edge", "127.0.0.1"), "127.0.0.1")
+
+    def test_targets_for_fans_out_local_plus_each_remote_with_unique_keys(self):
+        from core.docker_ctl import targets_for
+        from core.state import AppState, RemoteConfig
+        s = AppState()
+        s.set_remotes("edge", [
+            RemoteConfig(enabled=True, host="h1", user="u", key_path="/k"),
+            RemoteConfig(enabled=True, host="h2", user="u", key_path="/k"),
+        ])
+        targets = targets_for("edge", s)
+        self.assertEqual([t.is_remote for t in targets], [False, True, True])
+        keys = [t.key for t in targets]
+        self.assertEqual(len(keys), len(set(keys)), keys)
+
+    def test_bundle_exports_a_list_that_parse_remotes_reconstructs(self):
+        # export_bundle only reads .env files; the destructive apply_bundle
+        # (which writes real .env files) is deliberately not exercised here.
+        from core.settings_bundle import export_bundle
+        from core.state import AppState, RemoteConfig, parse_remotes
+        src = AppState()
+        src.set_remotes("edge", [
+            RemoteConfig(enabled=True, host="h1", user="u", key_path="/k", name="a"),
+            RemoteConfig(enabled=True, host="h2", user="u", key_path="/k", name="b"),
+        ])
+        bundle = export_bundle(src)
+        self.assertIsInstance(bundle["remote_edge"], list)
+        self.assertEqual(bundle["remote_siem"], [])
+        restored = parse_remotes(bundle["remote_edge"])
+        self.assertEqual([(r.host, r.name) for r in restored],
+                         [("h1", "a"), ("h2", "b")])
+
+    def test_display_name_prefers_name_then_host(self):
+        from core.state import RemoteConfig
+        self.assertEqual(RemoteConfig(name="label", host="h").display_name, "label")
+        self.assertEqual(RemoteConfig(host="h").display_name, "h")
+        self.assertEqual(RemoteConfig().display_name, "remote")

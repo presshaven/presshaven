@@ -7,8 +7,9 @@ import shutil
 
 from PyQt6.QtCore import QProcess
 from PyQt6.QtWidgets import (
-    QCheckBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QCheckBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+    QLineEdit, QMessageBox, QProgressBar, QPushButton, QSpinBox, QVBoxLayout,
+    QWidget,
 )
 
 from core.docker_ctl import Target
@@ -33,11 +34,15 @@ class RemoteConfigWidget(QWidget):
 
         layout = QVBoxLayout(self)
 
-        self.enabled_check = QCheckBox("Enable remote control for this project")
+        self.enabled_check = QCheckBox("Enable this remote host")
         self.enabled_check.setChecked(config.enabled)
         layout.addWidget(self.enabled_check)
 
         form = QFormLayout()
+        self.name_edit = QLineEdit(config.name)
+        self.name_edit.setPlaceholderText("optional label, e.g. \"staging\" or \"vm-02\"")
+        form.addRow("Name:", self.name_edit)
+
         self.host_edit = QLineEdit(config.host)
         form.addRow("Host / IP:", self.host_edit)
 
@@ -126,6 +131,7 @@ class RemoteConfigWidget(QWidget):
             user=self.user_edit.text().strip(),
             key_path=self.key_edit.text().strip(),
             remote_path=self.remote_path_edit.text().strip(),
+            name=self.name_edit.text().strip(),
         )
 
     def _test_connection(self) -> None:
@@ -279,3 +285,83 @@ class RemoteConfigWidget(QWidget):
             self.sync_result.setText(f"✗ Sync failed (rsync exit code {exit_code})")
             self.sync_result.setStyleSheet("color: #d9534f;")
         self._sync_process = None
+
+
+class RemoteHostsWidget(QWidget):
+    """A project's whole list of remote (SSH) hosts: zero or more
+    RemoteConfigWidget forms, each boxed with its own "Remove host" button,
+    plus an "Add host" button. Replaces the old single-remote-per-project
+    form -- targets_for(project) drives the local stack plus every enabled
+    host collected here."""
+
+    def __init__(self, project: str, configs: list[RemoteConfig], parent=None):
+        super().__init__(parent)
+        self.project = project
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+
+        self._hosts_layout = QVBoxLayout()
+        self._hosts_layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.addLayout(self._hosts_layout)
+
+        self._empty_label = QLabel(
+            "No remote hosts configured — this project runs on the local "
+            "Docker stack only. Add one to drive it on another machine over "
+            "SSH.")
+        self._empty_label.setWordWrap(True)
+        self._layout.addWidget(self._empty_label)
+
+        add_row = QHBoxLayout()
+        self.add_btn = QPushButton("Add host")
+        self.add_btn.clicked.connect(lambda: self._add_host(RemoteConfig()))
+        add_row.addWidget(self.add_btn)
+        add_row.addStretch()
+        self._layout.addLayout(add_row)
+
+        # (group box, its form) pairs, in display/persist order.
+        self._boxes: list[tuple[QGroupBox, RemoteConfigWidget]] = []
+        for config in configs:
+            self._add_host(config)
+
+    def _add_host(self, config: RemoteConfig) -> None:
+        box = QGroupBox()
+        box_layout = QVBoxLayout(box)
+        widget = RemoteConfigWidget(self.project, config, box)
+        box_layout.addWidget(widget)
+
+        remove_row = QHBoxLayout()
+        remove_row.addStretch()
+        remove_btn = QPushButton("Remove host")
+        remove_btn.clicked.connect(lambda: self._remove_host(box))
+        remove_row.addWidget(remove_btn)
+        box_layout.addLayout(remove_row)
+
+        # Keep the box title following whatever identifies the host, so a
+        # list of several stays readable while being edited.
+        def retitle(_=None) -> None:
+            box.setTitle(widget.to_config().display_name)
+        retitle()
+        widget.name_edit.textChanged.connect(retitle)
+        widget.host_edit.textChanged.connect(retitle)
+
+        self._hosts_layout.addWidget(box)
+        self._boxes.append((box, widget))
+        self._update_empty()
+
+    def _remove_host(self, box: QGroupBox) -> None:
+        self._boxes = [(b, w) for (b, w) in self._boxes if b is not box]
+        self._hosts_layout.removeWidget(box)
+        box.setParent(None)
+        box.deleteLater()
+        self._update_empty()
+
+    def _update_empty(self) -> None:
+        self._empty_label.setVisible(not self._boxes)
+
+    def to_configs(self) -> list[RemoteConfig]:
+        """Every non-blank host row, in display order. A row the user added
+        but left untouched is dropped rather than persisted as a phantom
+        host (see RemoteConfig.is_empty)."""
+        configs = [w.to_config() for (_b, w) in self._boxes]
+        return [c for c in configs if not c.is_empty()]

@@ -18,12 +18,12 @@ from core.paths import (
     EDGE_ENV_EXAMPLE, EDGE_ENV_FILE, SIEM_ENV_EXAMPLE, SIEM_ENV_FILE,
 )
 from core.settings_bundle import BundleError, apply_bundle, export_bundle, read_bundle, write_bundle
-from core.state import AppState
+from core.state import AppState, RemoteConfig
 from ui import theme
 from ui.common import set_status
 from ui.edge_policy_bar import EdgePolicyBar, current_document
 from ui.env_source_tab import EnvSourceTab
-from ui.remote_config_widget import RemoteConfigWidget
+from ui.remote_config_widget import RemoteHostsWidget
 from ui.setup_sections import (
     AlertsSection, CertsSection, DeploymentSection, HostChecksSection,
 )
@@ -75,21 +75,23 @@ class SettingsPage(QWidget):
         # is a callable, not a snapshot, so it always reflects whatever the
         # remote tabs below currently hold, including after they're saved.
         self.edge_env_tab = EnvSourceTab(
-            "edge", EDGE_ENV_FILE, EDGE_ENV_EXAMPLE, lambda: self.state.remote_edge,
+            "edge", EDGE_ENV_FILE, EDGE_ENV_EXAMPLE,
+            lambda: self.state.primary_remote("edge") or RemoteConfig(),
         )
         self.tabs.addTab(self.edge_env_tab, "ids .env")
 
         self.siem_env_tab = EnvSourceTab(
-            "siem", SIEM_ENV_FILE, SIEM_ENV_EXAMPLE, lambda: self.state.remote_siem,
+            "siem", SIEM_ENV_FILE, SIEM_ENV_EXAMPLE,
+            lambda: self.state.primary_remote("siem") or RemoteConfig(),
         )
         self.tabs.addTab(self.siem_env_tab, "siem .env")
 
-        self.edge_remote_widget = RemoteConfigWidget("edge", self.state.remote_edge)
-        edge_remote_tab = self._wrap_with_save(self.edge_remote_widget, self._save_edge_remote)
+        self.edge_remote_widget = RemoteHostsWidget("edge", self.state.remotes_for("edge"))
+        edge_remote_tab = self._wrap_with_save(self._scrolled(self.edge_remote_widget), self._save_edge_remote)
         self.tabs.addTab(edge_remote_tab, "ids remote (SSH)")
 
-        self.siem_remote_widget = RemoteConfigWidget("siem", self.state.remote_siem)
-        siem_remote_tab = self._wrap_with_save(self.siem_remote_widget, self._save_siem_remote)
+        self.siem_remote_widget = RemoteHostsWidget("siem", self.state.remotes_for("siem"))
+        siem_remote_tab = self._wrap_with_save(self._scrolled(self.siem_remote_widget), self._save_siem_remote)
         self.tabs.addTab(siem_remote_tab, "siem remote (SSH)")
 
         self.host_checks = HostChecksSection(self.state)
@@ -204,18 +206,20 @@ class SettingsPage(QWidget):
         return container
 
     def _save_edge_remote(self) -> None:
-        self.state.remote_edge = self.edge_remote_widget.to_config()
+        self.state.set_remotes("edge", self.edge_remote_widget.to_configs())
         self.state.save()
         self._on_state_changed()
         self.edge_env_tab.refresh_remote_availability()
-        QMessageBox.information(self, "Saved", "Remote settings saved for ids.")
+        n = len(self.state.remotes_for("edge"))
+        QMessageBox.information(self, "Saved", f"{n} remote host(s) saved for ids.")
 
     def _save_siem_remote(self) -> None:
-        self.state.remote_siem = self.siem_remote_widget.to_config()
+        self.state.set_remotes("siem", self.siem_remote_widget.to_configs())
         self.state.save()
         self._on_state_changed()
         self.siem_env_tab.refresh_remote_availability()
-        QMessageBox.information(self, "Saved", "Remote settings saved for siem.")
+        n = len(self.state.remotes_for("siem"))
+        QMessageBox.information(self, "Saved", f"{n} remote host(s) saved for siem.")
 
     # ---- Export / Import ----
 
