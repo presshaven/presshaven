@@ -32,6 +32,14 @@ def severity(color: str) -> str:
     return _COLOR_TO_SEVERITY.get(color, "info")
 
 
+def is_honeypot_diversion(kind: str, label: str) -> bool:
+    """True when this event is the moment a session is routed to the
+    honeypot -- i.e. "the honeypot received a visitor". Its routing outcome
+    carries HONEYPOT in the label. Single source of truth for the diversion
+    test, shared by the alert policy and the desktop-notification path."""
+    return kind == "outcome" and "HONEYPOT" in (label or "").upper()
+
+
 def severity_rank(color: str) -> int:
     return SEVERITY_ORDER.index(severity(color))
 

@@ -27,6 +27,18 @@ class SeverityTests(unittest.TestCase):
         self.assertLess(live_events.severity_rank(COLOR_LOW), live_events.severity_rank(COLOR_HIGH))
 
 
+class HoneypotDiversionTests(unittest.TestCase):
+    def test_outcome_with_honeypot_label_is_a_visit(self):
+        self.assertTrue(live_events.is_honeypot_diversion("outcome", "Routed to HONEYPOT"))
+        self.assertTrue(live_events.is_honeypot_diversion("outcome", "routed to honeypot pool 2"))
+
+    def test_non_outcome_or_non_honeypot_is_not(self):
+        self.assertFalse(live_events.is_honeypot_diversion("signal", "Routed to HONEYPOT"))
+        self.assertFalse(live_events.is_honeypot_diversion("outcome", "Served normally"))
+        self.assertFalse(live_events.is_honeypot_diversion("outcome", None))
+        self.assertFalse(live_events.is_honeypot_diversion("outcome", ""))
+
+
 class FilterTests(unittest.TestCase):
     def test_all_passes_everything(self):
         self.assertTrue(live_events.matches("all", "signal", "x", COLOR_INFO))

@@ -121,10 +121,27 @@ class SettingsPage(QWidget):
         self.poll_interval_spin.valueChanged.connect(self._on_poll_interval_spin_changed)
         form.addRow("Status refresh interval:", self.poll_interval_spin)
 
-        self.tray_notif_check = QCheckBox("Notify when a container becomes unhealthy")
+        self.tray_notif_check = QCheckBox(
+            "Notify when a container errors (unhealthy / exited with an error)")
         self.tray_notif_check.setChecked(self.state.tray_notifications_enabled)
         self.tray_notif_check.toggled.connect(self._on_tray_notif_toggled)
-        form.addRow("", self.tray_notif_check)
+        form.addRow("Desktop notifications:", self.tray_notif_check)
+
+        self.honeypot_notif_check = QCheckBox(
+            "Notify when the honeypot receives a visitor")
+        self.honeypot_notif_check.setChecked(self.state.honeypot_notifications_enabled)
+        self.honeypot_notif_check.toggled.connect(self._on_honeypot_notif_toggled)
+        form.addRow("", self.honeypot_notif_check)
+
+        notif_note = QLabel(
+            "Desktop notifications use the operating system's tray/notification "
+            "area, so they appear even when this window is in the background. "
+            "They are silently unavailable on a host without a system tray. "
+            "Richer security alerting (severity thresholds, cooldown, webhook) "
+            "lives on the Alerts tab."
+        )
+        notif_note.setWordWrap(True)
+        form.addRow("", notif_note)
 
         note = QLabel(
             "Lower the refresh interval for a snappier topology map; "
@@ -188,6 +205,10 @@ class SettingsPage(QWidget):
 
     def _on_tray_notif_toggled(self, checked: bool) -> None:
         self.state.tray_notifications_enabled = checked
+        self.state.save()
+
+    def _on_honeypot_notif_toggled(self, checked: bool) -> None:
+        self.state.honeypot_notifications_enabled = checked
         self.state.save()
 
     def _on_theme_combo_changed(self, index: int) -> None:

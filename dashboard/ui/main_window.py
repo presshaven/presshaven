@@ -86,6 +86,10 @@ _APP_ICON_PATH = DASHBOARD_DIR / "resources" / "app_icon.svg"
 # finishing cleanly is success, not something to alarm about).
 _NOTIFY_ON_STATUSES = {"unhealthy", "exited_bad"}
 
+# Shortest gap between two "honeypot received a visitor" balloons; a flood of
+# diversions during an attack collapses into one notice per window.
+_HONEYPOT_NOTIFY_COOLDOWN_S = 10.0
+
 PAGES = [
     "overview", "live_events", "pipeline", "sessions", "suricata", "detection", "whitelist", "honeypot_targets", "container_firewall", "pool_scaling", "services", "health", "resources", "certificates", "redis", "backups",
     "kibana", "patterns", "pattern_database", "signature_sim", "account_persistence", "pool_test", "breach_audit", "log_search", "extras", "wp_studio", "wp_update", "targeted_access", "settings", "learn",
@@ -438,6 +442,9 @@ class MainWindow(QMainWindow):
         self._webhook_jobs: set = set()
         self._last_webhook_error = ""
         self._last_webhook_warn_at = 0.0
+        # Rate-limit the dedicated "honeypot received a visitor" balloon so a
+        # burst of diversions under an active attack can't spam the desktop.
+        self._last_honeypot_notify_at = 0.0
         self.security_feed.event_parsed.connect(self._on_security_event)
 
         # A required tool going missing is recorded into the same
@@ -913,11 +920,37 @@ class MainWindow(QMainWindow):
         self._last_status = current
 
     def _on_security_event(self, event, ts: int) -> None:
+        is_visit = live_events.is_honeypot_diversion(event.kind, event.label)
+
+        # Dedicated OS notification when the honeypot receives a visitor,
+        # gated by its own Settings toggle and independent of the richer
+        # Alerts policy below (so it still fires even with alerts disabled).
+        if is_visit and self.state.honeypot_notifications_enabled:
+            self._notify_honeypot_visit(event.label, event.detail)
+
         policy = alert_policy.AlertPolicy.from_dict(self.state.alert_policy)
         if alert_policy.should_alert(policy, event.kind, event.label, event.color, event.score,
                                      self._alerts_sent, time.time()):
+            # A honeypot visit the dedicated path just handled must not also
+            # raise the policy's own balloon (double notice); the policy still
+            # governs its webhook here and every non-visit alert's balloon.
             self._deliver_alert(policy, event.label, event.detail, live_events.severity(event.color),
-                                event.score, ts)
+                                event.score, ts, desktop=not is_visit)
+
+    def _notify_honeypot_visit(self, label: str, detail: str) -> None:
+        """Balloon for a session routed to the honeypot, rate-limited by
+        _HONEYPOT_NOTIFY_COOLDOWN_S. No-op without a tray (headless host)."""
+        if not self.tray_icon:
+            return
+        now = time.time()
+        if now - self._last_honeypot_notify_at < _HONEYPOT_NOTIFY_COOLDOWN_S:
+            return
+        self._last_honeypot_notify_at = now
+        self.tray_icon.showMessage(
+            "Honeypot received a visitor",
+            alert_policy.message(label, detail),
+            QSystemTrayIcon.MessageIcon.Information, 8000,
+        )
 
     def _test_alert(self) -> None:
         policy = alert_policy.AlertPolicy.from_dict(self.state.alert_policy)
@@ -925,8 +958,11 @@ class MainWindow(QMainWindow):
                             webhook=False)
 
     def _deliver_alert(self, policy, label: str, detail: str, severity: str, score, ts: int,
-                       webhook: bool = True) -> None:
-        if policy.desktop and self.tray_icon:
+                       webhook: bool = True, desktop: bool | None = None) -> None:
+        # desktop=None means "follow the policy"; callers pass False to let a
+        # dedicated path (e.g. the honeypot-visit balloon) own the notice.
+        show_desktop = policy.desktop if desktop is None else desktop
+        if show_desktop and self.tray_icon:
             self.tray_icon.showMessage(f"Security alert ({severity})", alert_policy.message(label, detail),
                                        QSystemTrayIcon.MessageIcon.Critical, 10000)
         if webhook and policy.webhook_url:

@@ -90,10 +90,14 @@ class AppState:
     # remote target on a slow/metered link.
     poll_interval_ms: int = 5000
     # Notify (system tray balloon) when a container transitions into
-    # unhealthy/exited-with-error. Off by default so a first-run headless
-    # environment without a tray isn't surprised by anything; the tray
-    # icon itself only appears when the platform actually supports one.
+    # unhealthy/exited-with-error. The tray icon itself only appears when the
+    # platform actually supports one, so this is a no-op on a headless host.
     tray_notifications_enabled: bool = True
+    # Notify (system tray balloon) the moment the honeypot receives a visitor
+    # (a session routed to the honeypot -- see live_events.is_honeypot_diversion).
+    # A dedicated, simply-toggled OS notification separate from the richer
+    # Alerts policy; both are edited in Settings.
+    honeypot_notifications_enabled: bool = True
     # Whether the SIEM Analytics page's embedded browser uses a persistent (named)
     # QWebEngineProfile -- cookies survive app restarts, so logging into
     # Kibana once doesn't mean doing it again on every dashboard launch --

@@ -451,3 +451,28 @@ class RemoteHostsModelTests(unittest.TestCase):
         self.assertEqual(RemoteConfig(name="label", host="h").display_name, "label")
         self.assertEqual(RemoteConfig(host="h").display_name, "h")
         self.assertEqual(RemoteConfig().display_name, "remote")
+
+
+class StateNotificationFlagsTests(unittest.TestCase):
+    """The desktop-notification toggles persist and default to on. See
+    core/state.py and ui/main_window.py's notification routing."""
+
+    def test_honeypot_notifications_default_on(self):
+        from core.state import AppState
+        self.assertTrue(AppState().honeypot_notifications_enabled)
+        self.assertTrue(AppState().tray_notifications_enabled)
+
+    def test_flag_round_trips_through_state_file(self):
+        import json as _json
+        from core import state as state_mod
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "state.json"
+            with mock.patch.object(state_mod, "STATE_FILE", path):
+                s = state_mod.AppState()
+                s.honeypot_notifications_enabled = False
+                s.save()
+                self.assertFalse(state_mod.AppState.load().honeypot_notifications_enabled)
+            # Older state file without the key falls back to the default.
+            path.write_text(_json.dumps({"theme": "dark"}))
+            with mock.patch.object(state_mod, "STATE_FILE", path):
+                self.assertTrue(state_mod.AppState.load().honeypot_notifications_enabled)

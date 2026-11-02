@@ -53,7 +53,7 @@ def should_alert(policy: AlertPolicy, kind: str, label: str, color: str, score: 
         return False
     rank = live_events.severity_rank(color)
     wanted = rank >= live_events.SEVERITY_ORDER.index(policy.min_severity)
-    if policy.on_diversion and kind == "outcome" and "HONEYPOT" in label.upper():
+    if policy.on_diversion and live_events.is_honeypot_diversion(kind, label):
         wanted = True
     if policy.score_threshold and score is not None and score >= policy.score_threshold:
         wanted = True
