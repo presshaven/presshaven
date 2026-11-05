@@ -92,6 +92,17 @@ def main() -> int:
 
     window = MainWindow(state)
     window.show()
+    if os.environ.get("DASHBOARD_STALL_WATCH"):
+        # Diagnose UI freezes: stack of the stuck GUI thread -> logs/stall-*.txt
+        import threading
+        from PyQt6.QtCore import QTimer
+        from core.paths import LOG_DIR
+        from core.stall_watch import HEARTBEAT_MS, StallWatch
+        watch = StallWatch(threading.get_ident(), LOG_DIR)
+        beat = QTimer(window)
+        beat.timeout.connect(watch.beat)
+        beat.start(HEARTBEAT_MS)
+        watch.start()
     if wizard is not None and wizard.start_stacks:
         window.services_page.start_all()
     return app.exec()
