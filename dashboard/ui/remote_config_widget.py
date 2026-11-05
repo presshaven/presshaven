@@ -58,6 +58,22 @@ class RemoteConfigWidget(QWidget):
         self.user_edit = QLineEdit(config.user)
         form.addRow("SSH user:", self.user_edit)
 
+        # Edge hosts only: the SIEM they ship to may live on another machine.
+        self.sink_host_edit = QLineEdit(config.sink_host)
+        self.sink_host_edit.setPlaceholderText("empty = use VECTOR_HOST from this host's .env")
+        self.sink_host_edit.setToolTip(
+            "Where this host's Vector ships logs (the SIEM / vector_inbound). Leave "
+            "empty to keep whatever VECTOR_HOST the .env already has. When set, "
+            "VECTOR_HOST is forced to this value in every .env the dashboard "
+            "uploads to this remote -- the SSH host above is only used to manage it.")
+        self.sink_port_spin = QSpinBox()
+        self.sink_port_spin.setRange(0, 65535)
+        self.sink_port_spin.setSpecialValueText("default (.env VECTOR_PORT)")
+        self.sink_port_spin.setValue(config.sink_port)
+        if project == "edge":
+            form.addRow("Vector sink host:", self.sink_host_edit)
+            form.addRow("Vector sink port:", self.sink_port_spin)
+
         key_row = QHBoxLayout()
         self.key_edit = QLineEdit(config.key_path)
         key_browse = QPushButton("Browse…")
@@ -149,6 +165,8 @@ class RemoteConfigWidget(QWidget):
             key_path=self.key_edit.text().strip(),
             remote_path=self.remote_path_edit.text().strip(),
             name=self.name_edit.text().strip(),
+            sink_host=self.sink_host_edit.text().strip() if self.project == "edge" else "",
+            sink_port=self.sink_port_spin.value() if self.project == "edge" else 0,
         )
 
     def _test_connection(self) -> None:
@@ -207,7 +225,11 @@ class RemoteConfigWidget(QWidget):
             f"This will overwrite {remote_env_path} on "
             f"{config.user}@{config.host} with the LOCAL {env_label} file "
             "(sent as-is, including secrets, over the SSH connection just "
-            "tested).\n\nContinue?",
+            "tested)."
+            + (f"\n\nVECTOR_HOST will be set to {config.sink_host} "
+               + (f"and VECTOR_PORT to {config.sink_port} " if config.sink_port > 0 else "")
+               + "(this remote's Vector sink)." if self.project == "edge" and config.sink_host else "")
+            + "\n\nContinue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )

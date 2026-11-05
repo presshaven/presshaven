@@ -25,6 +25,14 @@ class RemoteConfig:
     # several share a user/host spelling; falls back to the host (see
     # display_name). Purely cosmetic -- never part of the ssh destination.
     name: str = ""
+    # Edge only: ship this host's logs to a SIEM on a DIFFERENT machine than the
+    # one the SIEM stack happens to run on. Empty = leave VECTOR_HOST/VECTOR_PORT
+    # in this host's .env untouched (the SIEM address is whatever .env says);
+    # set = every .env the dashboard writes to this remote gets VECTOR_HOST
+    # (and VECTOR_PORT if sink_port > 0) forced to these values. Independent of
+    # `host`, which is only where the dashboard SSHes to manage this edge stack.
+    sink_host: str = ""
+    sink_port: int = 0
 
     def is_configured(self) -> bool:
         return bool(self.enabled and self.host and self.user and self.key_path)
@@ -45,7 +53,8 @@ class RemoteConfig:
         untouched default from a real (possibly disabled) host, so blank
         rows can be dropped on save and on legacy migration."""
         return not (self.host or self.user or self.key_path
-                    or self.remote_path or self.name or self.enabled)
+                    or self.remote_path or self.name or self.enabled
+                    or self.sink_host or self.sink_port)
 
     @classmethod
     def from_dict(cls, data: dict) -> "RemoteConfig":

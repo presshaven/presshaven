@@ -42,6 +42,23 @@ def remote_env_path(project: str, remote: RemoteConfig) -> str:
     return Target(project=project, remote=remote).remote_env_path()
 
 
+def apply_sink_override(text: str, project: str, remote: RemoteConfig) -> str:
+    """The .env `text` with this remote's separate Vector sink applied.
+
+    Only for the edge project (the SIEM stack has no outbound sink), and only
+    when the remote has one configured -- otherwise `text` is returned
+    byte-for-byte unchanged. Sets VECTOR_HOST, and VECTOR_PORT when a port is
+    given, leaving every other line (comments, secrets, ordering) as it was."""
+    sink = remote.sink_host.strip()
+    if project != "edge" or not sink:
+        return text
+    env = EnvFile.from_text(text, path=Path(".env"))
+    env.set("VECTOR_HOST", sink)
+    if remote.sink_port > 0:
+        env.set("VECTOR_PORT", str(remote.sink_port))
+    return env.render()
+
+
 def _require_configured(remote: RemoteConfig) -> None:
     if not remote.is_configured():
         raise EnvUploadError("Remote connection is not fully configured.")
@@ -54,6 +71,12 @@ def upload_env(local_path: Path, project: str, remote: RemoteConfig, timeout: fl
     _require_configured(remote)
     if not local_path.exists():
         raise EnvUploadError(f"Local file not found: {local_path}")
+    if project == "edge" and remote.sink_host.strip():
+        # A separate SIEM sink means the file must be rewritten on the way out,
+        # so send the adjusted text rather than the file as-is.
+        upload_env_text(apply_sink_override(local_path.read_text(), project, remote),
+                        project, remote, timeout=timeout)
+        return
     argv = ssh.scp_argv(remote, str(local_path), remote_env_path(project, remote), timeout=timeout)
     run_checked(argv, error=EnvUploadError, timeout=timeout + 5, what="scp")
 
@@ -78,6 +101,7 @@ def upload_env_text(text: str, project: str, remote: RemoteConfig, timeout: floa
     local file involved. The counterpart of download_env_text() for
     content that was fetched from remote and edited in memory."""
     _require_configured(remote)
+    text = apply_sink_override(text, project, remote)
     remote_cmd = f"cat > {shlex.quote(remote_env_path(project, remote))}"
     argv = ssh.ssh_argv(remote, remote_cmd, timeout=timeout)
     run_checked(argv, error=EnvUploadError, timeout=timeout + 5, input=text, what="ssh")
