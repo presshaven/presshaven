@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.docker_ctl import Target
-from core.env_upload import EnvUploadError, upload_env
+from core.env_upload import EnvUploadError, apply_sink_override, upload_env
 from core.paths import EDGE_DIR, EDGE_ENV_FILE, SIEM_DIR, SIEM_ENV_FILE
 from core.project_upload import (
     ProjectUploadError, build_changes_argv, build_rsync_argv,
@@ -23,6 +23,7 @@ from core.project_upload import (
     remote_dir_has_content,
 )
 from core.state import RemoteConfig
+from ui.domain_reminder import notify_env_uploaded
 from ui.selective_upload_dialog import SelectiveUploadDialog
 
 _LOCAL_ENV_FILES = {"edge": EDGE_ENV_FILE, "siem": SIEM_ENV_FILE}
@@ -249,6 +250,11 @@ class RemoteConfigWidget(QWidget):
             return
 
         self.upload_result.setText("✓ Uploaded")
+        try:
+            notify_env_uploaded(
+                self.project, apply_sink_override(local_path.read_text(), self.project, config))
+        except OSError:
+            pass
         self.upload_result.setStyleSheet("color: #5cb85c;")
         QMessageBox.information(
             self, "Uploaded",

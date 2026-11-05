@@ -384,6 +384,12 @@ const toc = [
     filter and Select all / none), and only those are uploaded, with the same progress bar. If nothing differs
     it says the remote is already up to date. Like the full upload it is enabled after a successful
     <em>Test connection</em>.</li>
+    <li><strong>Domain reminder banner.</strong> After a <code>.env</code> is uploaded to a remote (the upload
+    button, or saving from the Remote editor) the Connectors page shows a yellow banner if domain settings are
+    still at localhost: <code>WP_SITE_URL</code>, <code>TRUSTED_CALLBACK_DOMAINS</code>, <code>VECTOR_HOST</code>,
+    <code>ELASTICSEARCH_HOST</code>, <code>KIBANA_HOST</code> (ids), or any <code>*_HOST</code> / <code>*_DOMAIN</code>
+    / <code>*_URL</code> variable (siem; its stock <code>.env</code> has none, so it normally stays quiet). It names
+    the variables, never their values, and has a Dismiss button.</li>
     <li><strong>Vector sink host / port</strong> (ids remotes only). By default the SIEM address is whatever
     <code>VECTOR_HOST</code> / <code>VECTOR_PORT</code> the remote's <code>.env</code> holds. Set a sink host to
     ship that remote's logs to a SIEM on a different machine than the one you SSH into: every <code>.env</code> the

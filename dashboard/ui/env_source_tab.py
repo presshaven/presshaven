@@ -22,6 +22,7 @@ from core.docker_ctl import Target
 from core.env_file import EnvFile, merge_example_keys, seed_from_example
 from core.env_upload import EnvUploadError, download_env_text, upload_env_text
 from core.state import RemoteConfig
+from ui.domain_reminder import notify_env_uploaded
 from ui.env_editor import EnvEditorWidget
 from ui.setup_sections import SecretTools
 
@@ -208,6 +209,7 @@ class EnvSourceTab(QWidget):
                 QMessageBox.warning(self, "Save to remote failed", str(e))
                 return
             remote_env_path = Target(project=self.project, remote=remote).remote_env_path()
+            notify_env_uploaded(self.project, self.env_file.render())
             QMessageBox.information(
                 self, "Saved",
                 f"Saved to {remote.user}@{remote.host}:{remote_env_path}",

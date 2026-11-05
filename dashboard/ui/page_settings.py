@@ -28,6 +28,8 @@ from ui.setup_sections import (
     AlertsSection, CertsSection, DeploymentSection, HostChecksSection,
 )
 
+from ui.domain_reminder import DomainReminderBanner
+
 
 class SettingsPage(QWidget):
     def __init__(self, state: AppState, on_state_changed, on_poll_interval_changed=None,
@@ -41,6 +43,8 @@ class SettingsPage(QWidget):
         self._on_layer_changed = on_layer_changed  # callable(layer_id)
 
         layout = QVBoxLayout(self)
+        self.domain_banner = DomainReminderBanner()
+        layout.addWidget(self.domain_banner)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
 
