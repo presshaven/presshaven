@@ -10,6 +10,8 @@ const sidebar = [
 ];
 const toc = [
   { id: 'registry', text: 'Dashboard Registry', level: 2 },
+  { id: 'new-dashboards', text: 'Pipeline, Pool and Coverage Dashboards', level: 2 },
+  { id: 'clear', text: 'Clearing Elasticsearch', level: 2 },
   { id: 'building', text: 'Building and Exporting', level: 2 },
   { id: 'timeline', text: 'Pattern Report Timeline', level: 2 },
   { id: 'modules', text: 'Python Module Reference', level: 2 },
@@ -18,15 +20,15 @@ const toc = [
 ---
 <DocsLayout title="Kibana Dashboards" description="Visual dashboards for monitoring honeypot activity" section="Observability" sidebar={sidebar} toc={toc}>
   <p>
-    Six saved dashboards cover alert triage, aggregate threat posture, decisioning, session behaviour,
-    attack patterns and threat intelligence, plus a seventh embed-only timeline dashboard used for evidence
-    capture. All of them are generated from Python and committed as NDJSON, so the same definition can be
+    Ten saved dashboards cover alert triage, aggregate threat posture, decisioning, session behaviour,
+    attack patterns, threat intelligence, infrastructure logs, pipeline and host health, pool capacity and
+    detection coverage, plus an embed-only timeline dashboard used for evidence capture. All of them are generated from Python and committed as NDJSON, so the same definition can be
     rebuilt offline or imported into a live Kibana. The <code>kibana_dashboards_setup</code> service re-imports
     the NDJSON on every <code>docker compose up</code> with <code>overwrite=true</code>, so the set is
     idempotent and self-healing, and it sets the Web Traffic dashboard as Kibana's landing page.
   </p>
   <CardGrid columns={3}>
-    <DocCard title="6 registered views" icon="chart" tag="Operational" description="Alerts, web threat overview, decisions and decay, session analysis, attack patterns and threat intelligence." meta="dashboard-* IDs" />
+    <DocCard title="10 registered views" icon="chart" tag="Operational" description="Alerts, web threat overview, decisions and decay, session analysis, attack patterns, threat intelligence, infrastructure logs, pipeline health, pool capacity and detection coverage." meta="dashboard-* IDs" />
     <DocCard title="Timeline capture" icon="eye" tag="Evidence" description="A dedicated embed-mode dashboard renders a pattern's request timeline before a screenshot is taken." meta="per-pattern" />
     <DocCard title="Review friendly" icon="branch" tag="Code-managed" description="Layouts live in Python, so changes are reviewable and exportable rather than click-only state." meta="NDJSON in git" />
   </CardGrid>
@@ -40,7 +42,12 @@ const toc = [
     <tr><td>dashboard-session-analysis</td><td>Honeypot: Session Analysis</td><td>How did each session behave? Per-session volume, duration, peak score, offenses and sophistication class.</td></tr>
     <tr><td>dashboard-attack-patterns</td><td>Honeypot: Attack Patterns</td><td>What did requests match? Attack patterns and CVEs, the URIs behind them, security events, honeytokens and top attacking IPs.</td></tr>
     <tr><td>dashboard-threat-intel</td><td>Honeypot: Threat Intelligence</td><td>What does external reputation say? Threat-intelligence integrations and flagged addresses.</td></tr>
+    <tr><td>(infrastructure)</td><td>Honeypot: Infrastructure &amp; Ops Logs</td><td>How healthy is the stack itself? Docker container volume by service and stream, nginx's own <code>info</code>/<code>warn</code>/<code>error</code>/<code>crit</code> levels over time, Redis activity and a raw infrastructure log feed.</td></tr>
+    <tr><td>(pipeline)</td><td>Honeypot: Pipeline &amp; Host Health</td><td>Is the observability pipeline keeping up? See below.</td></tr>
+    <tr><td>dashboard-pool-capacity</td><td>Honeypot: Pool &amp; Capacity</td><td>How does the honeypot pool fleet scale, and how fast? See below.</td></tr>
+    <tr><td>dashboard-pattern-coverage</td><td>Honeypot: Detection Coverage</td><td>Which attack patterns is the honeypot currently set up to catch? See below.</td></tr>
   </table>
+  <p>The IDS Alerts dashboard also shows the parsed Suricata fields: the rule SIDs (<code>signature_id</code> and action) that fired, the URLs targeted in HTTP alerts, and how many distinct network flows (<code>community_id</code>) the alerts span.</p>
   <p>Each dashboard is built via <code>_dashboard(dash_id, title, description, layout)</code> and registered as <code>("dashboard", did, body)</code> objects in <code>saved_objects/honeypot-dashboards.ndjson</code>, all built on the <code>honeypot-*</code> data view whose time field is <code>timestamp</code>.</p>
   <div class="admonition note">
     <div class="admonition-title">What powers the decision panels</div>
@@ -51,6 +58,27 @@ const toc = [
     <code>patterns</code> and <code>route_reason</code>. Vector parses them into typed Elasticsearch fields — see
     <a href="/docs/observability/siem">SIEM &amp; Log Pipeline</a>.</p>
   </div>
+
+  <h2 id="new-dashboards">Pipeline, Pool and Coverage Dashboards</h2>
+  <p>These three bring data from the operator dashboard app into Kibana, so it can be queried without the app.</p>
+  <table>
+    <tr><th>Dashboard</th><th>Source data</th><th>Panels</th></tr>
+    <tr><td>Pipeline &amp; Host Health</td><td><code>honeypot-vector_metrics-*</code> and <code>honeypot-host_metrics-*</code></td><td>Both Vector shippers' <code>internal_metrics</code> (events in/out, Elasticsearch-sink buffer fill, errored and discarded events, told apart by <code>vector_role</code>) and the edge host's CPU load, memory, network and disk. Series are split by metric <code>name</code>. Empty until the metrics pipeline is deployed. The same data the app's Log Pipeline page watches.</td></tr>
+    <tr><td>Pool &amp; Capacity</td><td><code>honeypot-pool_state-*</code> and <code>honeypot-pool_events-*</code></td><td>Ready, free, waiting and building pools over time, the mix of pool states, per-pool build latency, per-session hand-off wait, and the edge host's load and memory as the pool manager sees them. Empty until the edge stack is redeployed.</td></tr>
+    <tr><td>Detection Coverage</td><td><code>honeypot-patterns</code> (<code>log_type: patterns</code>)</td><td>Enabled versus disabled patterns, by category, severity and kind; which were toggled away from the catalogue default; the full enabled-pattern list with its Suricata SID coverage. This is configuration, not traffic.</td></tr>
+  </table>
+  <h3>How the data gets there</h3>
+  <ul>
+    <li><strong>Pool state.</strong> <code>pool_manager</code> writes its live state and a latency event log as JSON lines to the <code>pool_state_logs</code> volume (<code>POOL_STATE_EXPORT_DIR</code>, snapshot every <code>POOL_STATE_SNAPSHOT_SECONDS</code>, default 30). <code>vector_outbound</code> mounts the volume read-only and tails it, so the data ships to the SIEM like any other log. The writer is <code>images/pool_manager/state_export.py</code>; the image <code>COPY</code>s its modules by name, so a new module has to be added to the Dockerfile.</li>
+    <li><strong>Host metrics.</strong> Vector's <code>host_metrics</code> source reads the host's <code>/proc</code> and <code>/sys</code>, bind-mounted read-only into <code>vector_outbound</code> and selected with the <code>PROCFS_ROOT</code> / <code>SYSFS_ROOT</code> environment variables.</li>
+    <li><strong>Detection patterns.</strong> The pattern catalogue and its enable/disable overlay live only in the operator dashboard app, so the app pushes a snapshot into Elasticsearch (one document per pattern, in <code>honeypot-patterns</code>). SIEM Analytics does this once automatically after the first successful Kibana load, and again whenever you press <strong>Send Patterns to SIEM</strong>. The dashboard stays empty until the first push.</li>
+  </ul>
+
+  <h2 id="clear">Clearing Elasticsearch</h2>
+  <p>The SIEM Analytics page has a <strong>Clear Elasticsearch</strong> button. It permanently deletes every
+  <code>honeypot-*</code> document in Elasticsearch, after a confirmation dialog, and reports how many documents
+  were removed. Use it to start a test run from empty dashboards. It cannot be undone, and it does not touch the
+  dashboards or data view themselves.</p>
 
   <h2 id="building">Building and Exporting</h2>
   <ul>
@@ -66,6 +94,7 @@ const toc = [
   </ul>
   <p>Inside the operator dashboard, the <a href="/docs/getting-started/dashboard#monitor">SIEM Analytics</a> page
   opens these dashboards with autologin and can export them to PDF.</p>
+  <p>Every new dashboard must be added in three places or the tests fail: <code>DASHBOARD_IDS</code> in <code>export_dashboards.py</code>, the bookmark list in <code>dashboard/ui/page_kibana.py</code>, and the per-page notes in <code>dashboard/core/kibana_report.py</code>.</p>
 
   <h2 id="timeline">Pattern Report Timeline Dashboard</h2>
   <p>A dedicated pattern report timeline dashboard (<code>pattern-report-request-timeline-dashboard</code>) is used in embed mode to capture screenshots of request timelines for specific patterns.</p>

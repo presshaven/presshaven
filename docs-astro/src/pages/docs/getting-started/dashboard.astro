@@ -149,6 +149,13 @@ const toc = [
     <a href="/docs/observability/kibana">Kibana Dashboards</a>.</li>
   </ul>
 
+  <p>Three more buttons sit on this page:</p>
+  <ul>
+    <li><strong>Send Patterns to SIEM</strong> pushes the effective pattern catalogue (with your enable/disable choices) into <code>honeypot-patterns</code> for the Detection Coverage dashboard. It also runs once automatically after the first successful Kibana load.</li>
+    <li><strong>Clear Elasticsearch</strong> permanently deletes every <code>honeypot-*</code> document after a confirmation. See <a href="/docs/observability/kibana#clear">Clearing Elasticsearch</a>.</li>
+    <li>The bookmarks cover all ten dashboards, including Pipeline &amp; Host Health, Pool &amp; Capacity and Detection Coverage.</li>
+  </ul>
+
   <h3>Log Pipeline</h3>
   <p>Shows whether the edge's Vector shipper is actually delivering logs to the SIEM. It combines four checks:
   shipping is configured (<code>ELK_ENABLED</code> / <code>VECTOR_HOST</code>), the shipper container is running,
@@ -371,6 +378,20 @@ const toc = [
     <li><em>Upload entire project…</em> copies the project with <code>rsync</code> and shows progress. Backups,
     logs and volumes are left out. If the remote directory is not empty, it asks before overwriting. This needs
     <code>rsync</code> installed locally as well as on the remote.</li>
+    <li><em>Selective upload…</em>, next to it, is the quick way to push a few changed files. It runs an
+    <code>rsync</code> dry run against the remote (same exclusions) and lists only the files that are new or
+    differ in size or modification time. Tick the ones to send (all are ticked by default; there is a path
+    filter and Select all / none), and only those are uploaded, with the same progress bar. If nothing differs
+    it says the remote is already up to date. Like the full upload it is enabled after a successful
+    <em>Test connection</em>.</li>
+    <li><strong>Vector sink host / port</strong> (ids remotes only). By default the SIEM address is whatever
+    <code>VECTOR_HOST</code> / <code>VECTOR_PORT</code> the remote's <code>.env</code> holds. Set a sink host to
+    ship that remote's logs to a SIEM on a different machine than the one you SSH into: every <code>.env</code> the
+    dashboard writes to that remote (the upload button, the wizard, the Local/Remote editor, Detection Policy)
+    then has <code>VECTOR_HOST</code> forced to it, and <code>VECTOR_PORT</code> too if a port is given (0 leaves
+    it alone). Leave it empty to keep the <code>.env</code> as is. A hand edit of <code>VECTOR_HOST</code> in the
+    remote editor is overwritten by the sink on the next save. The SIEM's Vector certificate must be valid for
+    the sink address (see <a href="/docs/observability/siem#transport">Transport &amp; mTLS</a>).</li>
     <li>Once a target is set up, every page that touches Docker or Redis (Workloads, shells, logs, Pool State Store,
     Suricata, Detection Policy, host-settings checks) runs its commands over SSH.</li>
   </ul>
@@ -390,6 +411,9 @@ const toc = [
     <tr><td>Nothing happens when using the desktop launcher</td><td>The paths in <code>Dashboard.desktop</code> still point to the author's machine. Fix <code>Exec</code>, <code>Path</code> and <code>Icon</code>. On a first run, wait for the setup notification and the progress window.</td></tr>
     <tr><td>Embedded browsers are blank or crash</td><td>Missing Qt/Chromium system libraries. See <a href="/docs/getting-started#prerequisites">Prerequisites</a>.</td></tr>
     <tr><td><em>command not found</em> for docker, ssh or rsync</td><td>Use the install command in the dependency banner, then restart the app.</td></tr>
+    <tr><td>The window freezes or stutters</td><td>Start with <code>DASHBOARD_STALL_WATCH=1 ./run.sh</code>. When the UI thread is unresponsive for over a second, the stack it was stuck in is written to <code>dashboard/logs/stall-&lt;time&gt;.txt</code>. A stack that ends in <code>app.exec()</code> means the stall was inside Qt itself (X11, painting), not dashboard code; a network or display change on X11 can cause that. Off by default, no cost when off.</td></tr>
+    <tr><td>Log panels lag on a chatty service</td><td>Output is drawn in small slices so the window stays responsive. If a burst is faster than it can be drawn, the oldest queued text is skipped with a <em>[... output too fast to display; older lines skipped ...]</em> note; the panel only keeps its last 5000 lines anyway.</td></tr>
+    <tr><td>Remote Start shows only logs</td><td>The log tail that resumes after Start no longer erases the <code>up</code> output, and does not resume at all if <code>up</code> failed, so the error stays on screen. For "Pool overlaps with other one on this address space", see <a href="/docs/operations/runbooks">Runbooks</a>.</td></tr>
     <tr><td>Global Visualization is green but Kibana is empty</td><td>Open Log Pipeline. See also <a href="/docs/operations/runbooks">Runbooks</a>.</td></tr>
   </table>
 

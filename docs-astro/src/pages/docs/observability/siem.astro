@@ -14,6 +14,7 @@ const toc = [
   { id: 'transport', text: 'Transport & mTLS', level: 2 },
   { id: 'contracts', text: 'Pipeline Contracts', level: 2 },
   { id: 'access-log', text: 'Security Access Log', level: 2 },
+  { id: 'pillars', text: 'Logs, Metrics and Traces', level: 2 },
 ];
 ---
 <DocsLayout title="SIEM & Log Pipeline" description="How logs are processed and analyzed using SIEM tools" section="Observability" sidebar={sidebar} toc={toc}>
@@ -84,4 +85,15 @@ Kibana dashboards (honeypot-* data view)</code></pre>
                    'uri_class="$uri_class" patterns="$threat_patterns" '
                    'reason="$route_reason" cache_status="$upstream_cache_status"';
 access_log /var/log/nginx/security.log security;</code></pre>
+
+  <h2 id="pillars">Logs, Metrics and Traces</h2>
+  <p>Everything lands under the <code>honeypot-*</code> data view (<code>honeypot-&#123;log_type&#125;-%Y.%m.%d</code>),
+  so all three pillars are queryable in one place.</p>
+  <table>
+    <tr><th>Pillar</th><th>Indices</th><th>Notes</th></tr>
+    <tr><td>Logs</td><td><code>nginx_access</code>, <code>nginx_security</code>, <code>nginx_error</code>, <code>suricata</code>, <code>suricata_fast</code>, <code>docker</code>, <code>redis</code></td><td>Both Vector processes run with end-to-end acknowledgements, blocking (never dropping) buffers and generous retries, so backpressure holds and retries instead of silently losing a batch.</td></tr>
+    <tr><td>Traces</td><td><code>nginx_security</code>, <code>nginx_error</code></td><td>The per-request decision trace (<code>request_score</code>, <code>decayed_score</code>, <code>carried_score</code>, <code>offenses</code>, <code>decay_state</code>, <code>uri_class</code>, <code>patterns</code>, <code>route_reason</code>) is this stack's request trace.</td></tr>
+    <tr><td>Metrics</td><td><code>vector_metrics</code>, <code>host_metrics</code>, <code>pool_state</code>, <code>pool_events</code></td><td><code>vector_metrics</code> is both Vector processes' own health, told apart by <code>vector_role</code> = <code>edge_shipper</code> or <code>siem_aggregator</code>. <code>host_metrics</code> is the edge host's CPU, memory, disk and network. Both come from <code>internal_metrics</code> / <code>host_metrics</code> sources, flattened with <code>metric_to_log</code>. <code>pool_state</code> and <code>pool_events</code> come from <code>pool_manager</code>.</td></tr>
+  </table>
+  <p>The Kibana dashboards for these are described in <a href="/docs/observability/kibana#new-dashboards">Kibana Dashboards</a>.</p>
 </DocsLayout>
