@@ -66,6 +66,52 @@ def build_rsync_argv(local_dir: Path, remote: RemoteConfig, timeout: float = 10.
     return argv
 
 
+# rsync --itemize-changes line: 11 flag characters (YXcstpoguax), a space,
+# then the path. Y is "<" for a file sent to the remote; X is the type.
+_ITEMIZE_RE = re.compile(r"^([<>ch.*])([fdLDS])([.+?a-zA-Z]{9}) (.+)$")
+
+
+def build_changes_argv(local_dir: Path, remote: RemoteConfig, timeout: float = 10.0) -> list[str]:
+    """Dry run of the whole-project sync: same excludes and destination, but
+    `-n --itemize-changes` so rsync only LISTS what it would send. Compared by
+    size + modification time (rsync's default, and what the real sync -a
+    preserves), so it does not read file contents on either side."""
+    argv = build_rsync_argv(local_dir, remote, timeout)
+    argv[1] = "-azn"                       # was "-az"; -n = dry run
+    argv.insert(2, "--itemize-changes")
+    argv.remove("--info=progress2")        # no progress needed for a listing
+    return argv
+
+
+def parse_changed_files(rsync_output: str) -> list[str]:
+    """Paths (relative to the project root) of the files an --itemize-changes
+    dry run would transfer, sorted. Directory-only changes (a touched mtime),
+    and anything that is not a file or symlink sent to the remote, are
+    skipped; non-itemize lines in the stream (ssh banners) never match."""
+    files = []
+    for line in rsync_output.splitlines():
+        m = _ITEMIZE_RE.match(line.rstrip("\r"))
+        if not m:
+            continue
+        direction, kind, _flags, path = m.groups()
+        if direction == "<" and kind in ("f", "L"):
+            files.append(path)
+        elif direction == "c" and kind == "L":
+            files.append(path)
+    return sorted(set(files))
+
+
+def build_selective_rsync_argv(local_dir: Path, remote: RemoteConfig,
+                               files_from: str, timeout: float = 10.0) -> list[str]:
+    """The real sync, restricted to the paths listed (one per line, relative to
+    the project root) in the file `files_from`. Same flags, excludes and
+    destination as build_rsync_argv(); --files-from also creates any missing
+    parent directories on the remote."""
+    argv = build_rsync_argv(local_dir, remote, timeout)
+    argv.insert(-2, f"--files-from={files_from}")
+    return argv
+
+
 def remote_dir_has_content(remote: RemoteConfig, timeout: float = 8.0) -> bool:
     """True if remote_path already exists and is non-empty -- used to ask
     "overwrite?" before syncing into it, rather than silently merging into

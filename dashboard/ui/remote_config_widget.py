@@ -3,7 +3,9 @@ Connection, "upload just the .env", and "sync the whole project" actions.
 Shared by the wizard and the Connectors & Config page."""
 from __future__ import annotations
 
+import os
 import shutil
+import tempfile
 
 from PyQt6.QtCore import QProcess
 from PyQt6.QtWidgets import (
@@ -16,10 +18,12 @@ from core.docker_ctl import Target
 from core.env_upload import EnvUploadError, upload_env
 from core.paths import EDGE_DIR, EDGE_ENV_FILE, SIEM_DIR, SIEM_ENV_FILE
 from core.project_upload import (
-    ProjectUploadError, build_rsync_argv, parse_progress_percent,
+    ProjectUploadError, build_changes_argv, build_rsync_argv,
+    build_selective_rsync_argv, parse_changed_files, parse_progress_percent,
     remote_dir_has_content,
 )
 from core.state import RemoteConfig
+from ui.selective_upload_dialog import SelectiveUploadDialog
 
 _LOCAL_ENV_FILES = {"edge": EDGE_ENV_FILE, "siem": SIEM_ENV_FILE}
 _PROJECT_ENV_LABELS = {"edge": "ids/.env", "siem": "siem/docker/.env"}
@@ -107,6 +111,16 @@ class RemoteConfigWidget(QWidget):
         self.sync_btn.clicked.connect(self._sync_project)
         self.sync_result = QLabel("")
         sync_row.addWidget(self.sync_btn)
+        # Next to the full sync: compares against the remote first and lets you
+        # send just the files that differ -- a few KB instead of the whole tree
+        # (the full sync's scan of production_eshop_files alone is slow).
+        self.selective_btn = QPushButton("Selective upload…")
+        self.selective_btn.setToolTip(
+            "Compare this project with the remote and upload only the files you "
+            "pick from the ones that differ (same exclusions as the full upload).")
+        self.selective_btn.setEnabled(False)
+        self.selective_btn.clicked.connect(self._selective_upload)
+        sync_row.addWidget(self.selective_btn)
         sync_row.addWidget(self.sync_result)
         sync_row.addStretch()
         layout.addLayout(sync_row)
@@ -117,6 +131,9 @@ class RemoteConfigWidget(QWidget):
         layout.addWidget(self.sync_progress)
 
         self._sync_process: QProcess | None = None
+        self._scan_process: QProcess | None = None
+        self._scan_output = ""
+        self._files_from_path: str | None = None
 
     def _browse_key(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select SSH private key")
@@ -141,12 +158,14 @@ class RemoteConfigWidget(QWidget):
             self.test_result.setStyleSheet("color: #f0ad4e;")
             self.upload_btn.setEnabled(False)
             self.sync_btn.setEnabled(False)
+            self.selective_btn.setEnabled(False)
             return
         target = Target(project=self.project, remote=config)
         self.test_result.setText("Testing…")
         self.test_result.setStyleSheet("color: #888888;")
         self.upload_btn.setEnabled(False)
         self.sync_btn.setEnabled(False)
+        self.selective_btn.setEnabled(False)
         self.repaint()
         ok = target.is_reachable()
         if ok:
@@ -172,6 +191,7 @@ class RemoteConfigWidget(QWidget):
             self.upload_btn.setEnabled(True)
             self.sync_result.setText("")
             self.sync_btn.setEnabled(True)
+            self.selective_btn.setEnabled(True)
         else:
             self.test_result.setText("✗ Could not connect")
             self.test_result.setStyleSheet("color: #d9534f;")
@@ -255,7 +275,11 @@ class RemoteConfigWidget(QWidget):
         local_dir = _LOCAL_PROJECT_DIRS[self.project]
         argv = build_rsync_argv(local_dir, config)
 
+        self._start_sync(argv)
+
+    def _start_sync(self, argv: list[str]) -> None:
         self.sync_btn.setEnabled(False)
+        self.selective_btn.setEnabled(False)
         self.sync_progress.setVisible(True)
         self.sync_progress.setValue(0)
         self.sync_result.setText("Syncing…")
@@ -267,6 +291,61 @@ class RemoteConfigWidget(QWidget):
         self._sync_process.finished.connect(self._on_sync_finished)
         self._sync_process.start(argv[0], argv[1:])
 
+    # -- selective upload: dry-run to list what differs, pick, send just those --
+    def _selective_upload(self) -> None:
+        if shutil.which("rsync") is None:
+            QMessageBox.warning(
+                self, "rsync not found",
+                "This feature needs the 'rsync' command installed on this "
+                "machine (not the remote host).",
+            )
+            return
+        config = self.to_config()
+        argv = build_changes_argv(_LOCAL_PROJECT_DIRS[self.project], config)
+
+        self.sync_btn.setEnabled(False)
+        self.selective_btn.setEnabled(False)
+        self.sync_result.setText("Comparing with the remote…")
+        self.sync_result.setStyleSheet("color: #888888;")
+        self._scan_output = ""
+        self._scan_process = QProcess(self)
+        self._scan_process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self._scan_process.readyReadStandardOutput.connect(self._on_scan_output)
+        self._scan_process.finished.connect(self._on_scan_finished)
+        self._scan_process.start(argv[0], argv[1:])
+
+    def _on_scan_output(self) -> None:
+        if self._scan_process is not None:
+            self._scan_output += bytes(self._scan_process.readAllStandardOutput()).decode(errors="replace")
+
+    def _on_scan_finished(self, exit_code: int, _exit_status) -> None:
+        self._on_scan_output()
+        self._scan_process = None
+        self.sync_btn.setEnabled(True)
+        self.selective_btn.setEnabled(True)
+        if exit_code != 0:
+            self.sync_result.setText(f"✗ Comparison failed (rsync exit code {exit_code})")
+            self.sync_result.setStyleSheet("color: #d9534f;")
+            return
+        files = parse_changed_files(self._scan_output)
+        if not files:
+            self.sync_result.setText("✓ Remote is already up to date")
+            self.sync_result.setStyleSheet("color: #5cb85c;")
+            return
+        config = self.to_config()
+        dialog = SelectiveUploadDialog(
+            files, f"{config.host}:{config.remote_path}", self)
+        if dialog.exec() != SelectiveUploadDialog.DialogCode.Accepted:
+            self.sync_result.setText("")
+            return
+        chosen = dialog.selected()
+        fd, path = tempfile.mkstemp(prefix="selective_upload_", suffix=".txt")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(chosen) + "\n")
+        self._files_from_path = path
+        self._start_sync(build_selective_rsync_argv(
+            _LOCAL_PROJECT_DIRS[self.project], config, path))
+
     def _on_sync_output(self) -> None:
         if self._sync_process is None:
             return
@@ -277,6 +356,13 @@ class RemoteConfigWidget(QWidget):
 
     def _on_sync_finished(self, exit_code: int, _exit_status) -> None:
         self.sync_btn.setEnabled(True)
+        self.selective_btn.setEnabled(True)
+        if self._files_from_path:
+            try:
+                os.unlink(self._files_from_path)
+            except OSError:
+                pass
+            self._files_from_path = None
         if exit_code == 0:
             self.sync_progress.setValue(100)
             self.sync_result.setText("✓ Synced")
