@@ -11,13 +11,28 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PyQt6.QtCore import QProcess, pyqtSignal
+from PyQt6.QtCore import QProcess, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QHBoxLayout, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
 from core.line_buffer import LineBuffer
 from ui import ansi_render, theme
+
+
+# Rendering is throttled: a remote `logs --tail=all` (or any chatty service)
+# can deliver megabytes in a burst, and inserting each chunk into the
+# QPlainTextEdit synchronously (one styled insertText per ANSI segment) starves
+# the event loop -- the whole window freezes until the flood is rendered. Output
+# is queued instead and drawn in bounded slices from a timer, so the UI keeps
+# repainting and responding between slices.
+_RENDER_INTERVAL_MS = 40
+_RENDER_SLICE_CHARS = 32_000
+# The view keeps only the last 5000 blocks anyway, so when the backlog outgrows
+# this the oldest queued text could never be seen -- drop it rather than
+# spending seconds drawing text that is scrolled off immediately.
+_BACKLOG_MAX_CHARS = 600_000
+_PENDING_MAX_CHUNKS = 20_000   # same bound for text held back by Pause
 
 
 class LogPanel(QWidget):
@@ -44,6 +59,11 @@ class LogPanel(QWidget):
         self._suppress_finish = False
         self._paused = False
         self._pending: list[str] = []
+        self._backlog = ""     # accepted output awaiting throttled rendering
+        self._dropped = False  # backlog was trimmed since the last render
+        self._render_timer = QTimer(self)
+        self._render_timer.setInterval(_RENDER_INTERVAL_MS)
+        self._render_timer.timeout.connect(self._render_slice)
         self._default_text_color = ansi_render.panel_colors()[1]
         self._ansi = ansi_render.make_parser()
         self._last_argv: list[str] | None = None
@@ -156,6 +176,9 @@ class LogPanel(QWidget):
         self._paused = False
         self.pause_button.setText("Pause")
         self._pending.clear()
+        self._backlog = ""
+        self._dropped = False
+        self._render_timer.stop()
         self.catchup_button.setEnabled(False)
         self.catchup_button.setText("Catch up (0)")
         self._last_argv = argv
@@ -215,6 +238,7 @@ class LogPanel(QWidget):
 
     def _flush_pending(self) -> None:
         if self._pending:
+            self._drain_backlog()
             self.append("".join(self._pending))
             self._pending.clear()
         self.catchup_button.setEnabled(False)
@@ -227,11 +251,45 @@ class LogPanel(QWidget):
         reveals everything (including "process exited") in order."""
         if self._paused:
             self._pending.append(text)
+            if len(self._pending) > _PENDING_MAX_CHUNKS:
+                del self._pending[:len(self._pending) - _PENDING_MAX_CHUNKS]
             self.catchup_button.setEnabled(True)
             buffered_lines = sum(chunk.count("\n") for chunk in self._pending)
             self.catchup_button.setText(f"Catch up ({buffered_lines})")
         else:
-            self.append(text)
+            self._enqueue(text)
+
+    def _enqueue(self, text: str) -> None:
+        self._backlog += text
+        if len(self._backlog) > _BACKLOG_MAX_CHARS:
+            self._backlog = self._backlog[-_BACKLOG_MAX_CHARS:]
+            self._dropped = True
+        if not self._render_timer.isActive():
+            self._render_timer.start()
+
+    def _render_slice(self) -> None:
+        if not self._backlog:
+            self._render_timer.stop()
+            return
+        if self._dropped:
+            self._dropped = False
+            self.append("\n[... output too fast to display; older lines skipped ...]\n")
+        chunk, self._backlog = (self._backlog[:_RENDER_SLICE_CHARS],
+                                self._backlog[_RENDER_SLICE_CHARS:])
+        self.append(chunk)
+        if not self._backlog:
+            self._render_timer.stop()
+
+    def _drain_backlog(self) -> None:
+        """Render whatever is queued now (bounded by _BACKLOG_MAX_CHARS), so
+        a banner emitted next lands after all the output, in order."""
+        self._render_timer.stop()
+        if self._backlog:
+            if self._dropped:
+                self._dropped = False
+                self.append("\n[... output too fast to display; older lines skipped ...]\n")
+            chunk, self._backlog = self._backlog, ""
+            self.append(chunk)
 
     def _on_output(self) -> None:
         if self.process is None:
@@ -257,6 +315,7 @@ class LogPanel(QWidget):
     def _on_finished(self, exit_code: int, _exit_status) -> None:
         if self._suppress_finish:
             return  # a process we killed to start a new one -- not a real completion
+        self._drain_backlog()
         self._emit(f"\n\n[process exited with code {exit_code}]\n")
         self.stop_button.setEnabled(False)
         self.finished.emit(exit_code)
@@ -264,5 +323,6 @@ class LogPanel(QWidget):
     def _on_error(self, error) -> None:
         if self._suppress_finish:
             return
+        self._drain_backlog()
         self._emit(f"\n[process error: {error}]\n")
         self.stop_button.setEnabled(False)
