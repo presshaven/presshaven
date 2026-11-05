@@ -73,6 +73,12 @@ services:
     # kernel write it back and reclaim it as it goes; measured the same
     # ~19 s copy time at 256m, and rsync's own memory is a few MB.
     mem_limit: 256m
+    # It only copies files (rsync/openssl) and needs no network. Left without a
+    # `networks:` key it would sit on Compose's implicit `default` network,
+    # whose subnet Docker picks itself -- and it can pick 172.20.0.0/16 before
+    # production_network (pinned to 172.20.0.0/24) exists, after which `up`
+    # fails with "Pool overlaps with other one on this address space".
+    network_mode: none
     volumes:
       - ./production_eshop_files:/source_files:ro
       - ./production_database_data:/source_db:ro
@@ -1898,7 +1904,7 @@ services:
         # dashboard's Network IDS page and the log_capper read these, and a
         # fresh start keeps "recent alerts" actually recent. On by default;
         # set SURICATA_AUTO_CLEANUP=false in .env to retain logs across runs.
-        # ($$VAR, not $VAR: Compose consumes a single $ before passing the
+        # (a doubled dollar sign, not a single one: Compose consumes a single $ before passing the
         # script to the shell, same as $$sc_pid/$$FILTER_FIFO below.)
         if [ "$${SURICATA_AUTO_CLEANUP:-true}" = "true" ]; then
           echo '  SURICATA_AUTO_CLEANUP=true -- clearing previous run logs in /var/log/suricata'
@@ -2152,7 +2158,7 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
     environment:
-      # Vector 0.50+ no longer expands ${VAR} in its config unless asked to:
+      # Vector 0.50+ no longer expands dollar-brace variables in its config unless asked to:
       # without this, vector.yaml's docker_logs filter stays the literal
       # "com.docker.compose.project=${COMPOSE_PROJECT_NAME:-...}" (matches no
       # container) and the SIEM address is unresolved -- it validates and

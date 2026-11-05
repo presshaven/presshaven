@@ -137,7 +137,11 @@ class LogPanel(QWidget):
     def run(
         self, argv: list[str], cwd: str | None = None,
         line_filter: Callable[[str], bool] | None = None,
+        keep_output: bool = False,
     ) -> None:
+        # keep_output: append to what is already shown instead of clearing it
+        # (the log tail that resumes after a Start must not erase the `up`
+        # output, including any build/start error in it).
         # Kill any in-flight process WITHOUT letting its finished/error
         # signal reach our consumers -- that stale "the thing I just killed
         # exited" event is not a real completion of anything the caller
@@ -145,7 +149,10 @@ class LogPanel(QWidget):
         self._suppress_finish = True
         self.stop()
         self._suppress_finish = False
-        self.clear()
+        if keep_output:
+            self.append("\n")
+        else:
+            self.clear()
         self._paused = False
         self.pause_button.setText("Pause")
         self._pending.clear()

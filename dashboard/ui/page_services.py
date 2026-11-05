@@ -136,7 +136,7 @@ class TargetPanel(QGroupBox):
     def is_mutating_action_running(self) -> bool:
         return self._mutating_action and self.log_panel.is_running()
 
-    def _run(self, *compose_args: str, mutating: bool = True) -> None:
+    def _run(self, *compose_args: str, mutating: bool = True, keep_output: bool = False) -> None:
         self._mutating_action = mutating
         self._last_mutating_args = compose_args if mutating else ()
         # A fresh `logs -f` tail replays its own `--tail=50` scrollback --
@@ -155,7 +155,7 @@ class TargetPanel(QGroupBox):
             if out:
                 self.log_panel.append(out)
         argv, cwd = self.target.build(*compose_args)
-        self.log_panel.run(argv, cwd)
+        self.log_panel.run(argv, cwd, keep_output=keep_output)
 
     def _on_log_line(self, text: str) -> None:
         self._error_monitor.process_chunk(self.target.key, text)
@@ -191,7 +191,12 @@ class TargetPanel(QGroupBox):
             # the containers vanish from `ps`.
             if self._svc_worker is not None:
                 self._svc_worker.notify_operation_finished(_exit_code)
-            self._run("logs", "--tail=50", "-f", mutating=False)
+            # A failed up/down leaves its output on screen: resuming the tail
+            # would only bury the error that explains why services are missing.
+            if _exit_code != 0:
+                return
+            # Resume the tail below the finished command's output, not over it.
+            self._run("logs", "--tail=50", "-f", mutating=False, keep_output=True)
 
     def _seed_edge_policy(self) -> None:
         """A freshly started edge with no policy in Redis gets the one saved

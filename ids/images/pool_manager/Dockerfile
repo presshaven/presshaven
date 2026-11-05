@@ -6,5 +6,5 @@ FROM python:3.15.1-alpine3.24
 RUN apk add --no-cache rsync tar \
  && pip install --no-cache-dir docker==7.2.0 redis==8.1.0
 WORKDIR /app
-COPY pool_logic.py manager.py ./
+COPY pool_logic.py state_export.py manager.py ./
 CMD ["python", "-u", "manager.py"]

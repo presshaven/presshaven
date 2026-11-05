@@ -365,3 +365,11 @@ volumes:
 networks:
   elastic:
     driver: bridge
+    # Pinned, not auto-allocated: Docker hands an unpinned network the next free
+    # 172.x.0.0/16, which on a host that also runs the edge stack can be one of
+    # the edge's fixed networks (172.20-24.0.0/24, ids/docker-compose.yml) --
+    # whichever stack starts second then fails with "Pool overlaps with other
+    # one on this address space". Kept outside 172.17-24.
+    ipam:
+      config:
+        - subnet: 172.29.0.0/24
