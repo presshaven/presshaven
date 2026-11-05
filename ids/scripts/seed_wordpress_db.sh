@@ -399,6 +399,26 @@ WP_CLI::log( $changed
 PHP
 }
 
+# WP_SITE_URL is only consumed by `wp core install`, so a database seeded
+# earlier (e.g. while .env still said http://localhost) keeps that siteurl/home
+# forever and WordPress 301-redirects every request for the real domain to it.
+# Re-sync on every boot: update both options and rewrite the old URL inside
+# stored content (serialized-safe via wp search-replace; guid is left alone).
+ensure_site_url() {
+    want="${WP_SITE_URL%/}"
+    have="$($WP option get siteurl 2>/dev/null || true)"
+    have="${have%/}"
+    if [ -z "$have" ] || [ "$have" = "$want" ]; then
+        log "  Site URL already matches WP_SITE_URL"
+        return 0
+    fi
+    log "  Site URL differs from WP_SITE_URL -- updating ($have -> $want)"
+    $WP option update siteurl "$want" >/dev/null
+    $WP option update home "$want" >/dev/null
+    $WP search-replace "$have" "$want" --all-tables --skip-columns=guid --quiet || \
+        log "  search-replace of stored URLs failed (options were still updated)"
+}
+
 # ADMIN_ONLY=1: only apply the admin account (the db-proxy layer's
 # honeypot_admin_seed, whose database is a scrubbed clone that must not be
 # re-seeded or re-configured from here).
@@ -415,6 +435,7 @@ if $WP core is-installed 2>/dev/null; then
     if [ "${FORCE_RESEED:-0}" != "1" ]; then
         log "WordPress already installed -- skipping install (set FORCE_RESEED=1 to wipe and rebuild)."
         ensure_admin_account
+        ensure_site_url
         # SKIP_STOREFRONT_CONFIG=1: the database was cloned from an already-
         # configured source (pool_manager cloning production for a runtime
         # pool), so permalinks, shipping and the enabled payment gateways are
